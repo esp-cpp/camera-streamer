@@ -49,7 +49,7 @@ extern "C" void app_main(void) {
       cv.wait_until(lk, start + 100ms);
     }
   };
-  auto transmit_task_fn = [&image_ready_cv, &image_ready_cv_m](auto& m, auto& cv) {
+  auto transmit_task_fn = [&image_ready_cv, &image_ready_cv_m, &wifi_sta, &logger](auto& m, auto& cv) {
     {
       std::unique_lock<std::mutex> lk(image_ready_cv_m);
       auto cv_retval = image_ready_cv.wait_for(lk, 10ms);
@@ -61,6 +61,19 @@ extern "C" void app_main(void) {
         // function.
         return;
       }
+    }
+    // first make sure we're actually still connected to WiFi
+    if (!wifi_sta.is_connected()) {
+      logger.error("Not connected to WiFi, cannot send image!\n"
+                   "Waiting 1 second for WiFi to reconnect before trying again.");
+      // sleep here since wifi can take some time to reconnect and we don't want
+      // a _ton_ of logs...
+      {
+        std::unique_lock<std::mutex> lk(m);
+        cv.wait_for(lk, 1s);
+      }
+      // now return to try again.
+      return;
     }
     // TODO: here we'll actually get the image data, serialize it, and send it over
     // WiFi.
