@@ -2,17 +2,30 @@
 
 #include <chrono>
 
+#include "nvs_flash.h"
+
 #include "format.hpp"
 #include "task.hpp"
 #include "wifi_sta.hpp"
+
+#include "fs_init.hpp"
 
 using namespace std::chrono_literals;
 
 extern "C" void app_main(void) {
   espp::Logger logger({.tag = "Camera Streamer", .level = espp::Logger::Verbosity::WARN});
   logger.info("Bootup");
-  // TODO: initialize file system
+  // initialize NVS, needed for WiFi
+  esp_err_t ret = nvs_flash_init();
+  if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+    logger.warn("Erasing NVS flash...");
+    ESP_ERROR_CHECK(nvs_flash_erase());
+    ret = nvs_flash_init();
+  }
+  ESP_ERROR_CHECK(ret);
+  // initialize file system
   logger.info("Initializing littlefs");
+  fs_init();
   // TODO: initialize LED
   logger.info("Initializing LED");
   // initialize WiFi
@@ -51,6 +64,7 @@ extern "C" void app_main(void) {
   };
   auto transmit_task_fn = [&image_ready_cv, &image_ready_cv_m, &wifi_sta, &logger](auto& m, auto& cv) {
     {
+      // check the image_ready_cv to see if there's an image to transmit
       std::unique_lock<std::mutex> lk(image_ready_cv_m);
       auto cv_retval = image_ready_cv.wait_for(lk, 10ms);
       if (cv_retval == std::cv_status::no_timeout) {
