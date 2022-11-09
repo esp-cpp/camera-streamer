@@ -5,11 +5,12 @@
 #include "driver/i2c.h"
 #include "nvs_flash.h"
 
-#include "continuous_adc.hpp"
 #include "format.hpp"
+#include "oneshot_adc.hpp"
 #include "task.hpp"
 #include "wifi_sta.hpp"
 
+#include "esp_camera.h"
 #include "battery.hpp"
 #include "bm8563.hpp"
 #include "fs_init.hpp"
@@ -17,6 +18,7 @@
 using namespace std::chrono_literals;
 
 extern "C" void app_main(void) {
+  esp_err_t err;
   espp::Logger logger({.tag = "Camera Streamer", .level = espp::Logger::Verbosity::INFO});
   logger.info("Bootup");
   // initialize NVS, needed for WiFi
@@ -44,8 +46,42 @@ extern "C" void app_main(void) {
           logger.info("got IP: {}.{}.{}.{}", IP2STR(&eventdata->ip_info.ip));
         }
         });
-  // TODO: initialize camera
+  // initialize camera
   logger.info("Initializing camera");
+  static camera_config_t camera_config = {
+    .pin_pwdn  = -1,
+    .pin_reset = 15,
+    .pin_xclk = 27,
+    .pin_sccb_sda = 25,
+    .pin_sccb_scl = 23,
+
+    .pin_d7 = 19,
+    .pin_d6 = 36,
+    .pin_d5 = 18,
+    .pin_d4 = 39,
+    .pin_d3 = 5,
+    .pin_d2 = 34,
+    .pin_d1 = 35,
+    .pin_d0 = 32,
+    .pin_vsync = 22,
+    .pin_href = 26,
+    .pin_pclk = 21,
+
+    .xclk_freq_hz = 20000000,//EXPERIMENTAL: Set to 16MHz on ESP32-S2 or ESP32-S3 to enable EDMA mode
+    .ledc_timer = LEDC_TIMER_0,
+    .ledc_channel = LEDC_CHANNEL_0,
+
+    .pixel_format = PIXFORMAT_JPEG,//YUV422,GRAYSCALE,RGB565,JPEG
+    .frame_size = FRAMESIZE_UXGA,//QQVGA-UXGA, For ESP32, do not use sizes above QVGA when not JPEG. The performance of the ESP32-S series has improved a lot, but JPEG mode always gives better frame rates.
+
+    .jpeg_quality = 15, //0-63, for OV series camera sensors, lower number means higher quality
+    .fb_count = 3, //When jpeg mode is used, if fb_count more than one, the driver will work in continuous mode.
+    .grab_mode = CAMERA_GRAB_WHEN_EMPTY//CAMERA_GRAB_LATEST. Sets when buffers should be filled
+  };
+  err = esp_camera_init(&camera_config);
+  if (err != ESP_OK) {
+    logger.error("Could not initialize camera: {} '{}'", err, esp_err_to_name(err));
+  }
   // initialize the i2c bus (for RTC)
   logger.info("Initializing I2C");
   i2c_config_t i2c_cfg;
@@ -56,7 +92,7 @@ extern "C" void app_main(void) {
   i2c_cfg.sda_pullup_en = GPIO_PULLUP_ENABLE;
   i2c_cfg.scl_pullup_en = GPIO_PULLUP_ENABLE;
   i2c_cfg.master.clk_speed = (400*1000);
-  auto err = i2c_param_config(I2C_NUM_0, &i2c_cfg);
+  err = i2c_param_config(I2C_NUM_0, &i2c_cfg);
   if (err != ESP_OK)
     logger.error("config i2c failed {} '{}'", err, esp_err_to_name(err));
   err = i2c_driver_install(I2C_NUM_0, I2C_MODE_MASTER,  0, 0, 0);
@@ -88,7 +124,7 @@ extern "C" void app_main(void) {
       .log_level = espp::Logger::Verbosity::WARN
     });
   // initialize ADC
-  logger.info("Initializing Continuous ADC");
+  logger.info("Initializing Oneshot ADC");
   std::vector<espp::AdcConfig> channels{
     {
       .unit = ADC_UNIT_1,
@@ -96,19 +132,17 @@ extern "C" void app_main(void) {
       .attenuation = ADC_ATTEN_DB_11
     }
   };
-  // we use continuous adc here because 1) it already creates a task for
-  // sampling / filtering, and 2) it means that if we wanted to add other ADCs
-  // (for other components / uses) we can just update it's config.
-  espp::ContinuousAdc adc({
-      .sample_rate_hz = 20*1000, // 20KHz is minimum sample rate for ESP32 continuous ADC
+  // we use oneshot adc here to that we could add other channels if need be for
+  // other components, but it has no in-built filtering. NOTE: for some reason,
+  // I cannot use Continuous ADC in combination with esp32-camera...
+  espp::OneshotAdc adc({
+      .unit = ADC_UNIT_1,
       .channels = channels,
-      .convert_mode = ADC_CONV_SINGLE_UNIT_1, // ESP32 only supports SINGLE_UNIT_1
-      .window_size_bytes = 1024,
       .log_level = espp::Logger::Verbosity::WARN
     });
   auto read_battery_voltage = [&adc, &channels]() -> float {
     auto channel = channels[0].channel;
-    auto maybe_mv = adc.get_mv(channel);
+    auto maybe_mv = adc.read_mv(channel);
     float measurement = 0;
     if (maybe_mv.has_value()) {
       auto mv = maybe_mv.value();
@@ -131,9 +165,37 @@ extern "C" void app_main(void) {
   logger.info("Creating camera and transmit tasks");
   std::mutex image_ready_cv_m;
   std::condition_variable image_ready_cv;
-  auto camera_task_fn = [&image_ready_cv](auto& m, auto& cv) {
+  auto camera_task_fn = [&image_ready_cv, &logger](auto& m, auto& cv) {
     auto start = std::chrono::high_resolution_clock::now();
-    // TODO: take image
+    // take image
+    static camera_fb_t * fb = NULL;
+    static size_t _jpg_buf_len;
+    static uint8_t * _jpg_buf;
+
+    fb = esp_camera_fb_get();
+    if (!fb) {
+      logger.error("Camera capture failed");
+      return;
+    }
+    uint32_t sig = *((uint32_t *)&fb->buf[fb->len - 4]);
+
+    _jpg_buf_len = fb->len;
+    _jpg_buf = fb->buf;
+
+    if (!(_jpg_buf[_jpg_buf_len - 1] != 0xd9 || _jpg_buf[_jpg_buf_len - 2] != 0xd9)) {
+      esp_camera_fb_return(fb);
+      return;
+    }
+
+    // TODO: do something with it...
+    // uart_frame_send(kImage, _jpg_buf, _jpg_buf_len, true);
+    esp_camera_fb_return(fb);
+
+    auto end = std::chrono::high_resolution_clock::now();
+    float elapsed = std::chrono::duration<float>(end-start).count();
+    logger.info("MJPG: {}KB {}s ({:.1f}fps), 0x{:02x}",
+             (uint32_t)(_jpg_buf_len/1024), elapsed, 1.0f / elapsed, sig);
+
     // notify that image is ready
     image_ready_cv.notify_all();
     // try to get ~10 FPS
