@@ -36,10 +36,19 @@ The ESP32 TimerCam has the following specs:
 
 ### RTC (BM8563):
 
+From their documentation...
+
 | RTC Pin | ESP32 GPIO Number |
 |---------|-------------------|
 | SCL     | IO13              |
 | SDA     | IO4               |
+
+From their actual code...
+
+| RTC Pin | ESP32 GPIO Number |
+|---------|-------------------|
+| SCL     | IO14              |
+| SDA     | IO12              |
 
 ### Battery:
 
