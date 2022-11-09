@@ -1,3 +1,6 @@
 [submodule "components/espp"]
 	path = components/espp
 	url = git@github.com:esp-cpp/espp
+[submodule "components/esp32-camera"]
+	path = components/esp32-camera
+	url = git@github.com:espressif/esp32-camera
