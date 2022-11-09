@@ -5,17 +5,19 @@
 #include "driver/i2c.h"
 #include "nvs_flash.h"
 
+#include "continuous_adc.hpp"
 #include "format.hpp"
 #include "task.hpp"
 #include "wifi_sta.hpp"
 
+#include "battery.hpp"
 #include "bm8563.hpp"
 #include "fs_init.hpp"
 
 using namespace std::chrono_literals;
 
 extern "C" void app_main(void) {
-  espp::Logger logger({.tag = "Camera Streamer", .level = espp::Logger::Verbosity::WARN});
+  espp::Logger logger({.tag = "Camera Streamer", .level = espp::Logger::Verbosity::INFO});
   logger.info("Bootup");
   // initialize NVS, needed for WiFi
   esp_err_t ret = nvs_flash_init();
@@ -39,7 +41,7 @@ extern "C" void app_main(void) {
         .on_connected = nullptr,
         .on_disconnected = nullptr,
         .on_got_ip = [&logger](ip_event_got_ip_t* eventdata) {
-          logger.info("got IP: {}.{}.{}.{}\n", IP2STR(&eventdata->ip_info.ip));
+          logger.info("got IP: {}.{}.{}.{}", IP2STR(&eventdata->ip_info.ip));
         }
         });
   // TODO: initialize camera
@@ -85,8 +87,45 @@ extern "C" void app_main(void) {
       .read = bm8563_read,
       .log_level = espp::Logger::Verbosity::WARN
     });
-  // TODO: initialize battery
+  // initialize ADC
+  logger.info("Initializing Continuous ADC");
+  std::vector<espp::AdcConfig> channels{
+    {
+      .unit = ADC_UNIT_1,
+      .channel = ADC_CHANNEL_2, // this is the ADC for GPIO 38
+      .attenuation = ADC_ATTEN_DB_11
+    }
+  };
+  // we use continuous adc here because 1) it already creates a task for
+  // sampling / filtering, and 2) it means that if we wanted to add other ADCs
+  // (for other components / uses) we can just update it's config.
+  espp::ContinuousAdc adc({
+      .sample_rate_hz = 20*1000, // 20KHz is minimum sample rate for ESP32 continuous ADC
+      .channels = channels,
+      .convert_mode = ADC_CONV_SINGLE_UNIT_1, // ESP32 only supports SINGLE_UNIT_1
+      .window_size_bytes = 1024,
+      .log_level = espp::Logger::Verbosity::WARN
+    });
+  auto read_battery_voltage = [&adc, &channels]() -> float {
+    auto channel = channels[0].channel;
+    auto maybe_mv = adc.get_mv(channel);
+    float measurement = 0;
+    if (maybe_mv.has_value()) {
+      auto mv = maybe_mv.value();
+      measurement = mv;
+    }
+    return measurement;
+  };
+  // initialize battery
   logger.info("Initializing battery measurement");
+  Battery battery(Battery::Config{
+      .read = read_battery_voltage,
+      // NOTE: cannot initialize battery hold pin right now, if I do then the
+      // board ... stops running; therefore I've configured the battery to not
+      // use the hold gpio
+      .hold_gpio = -1, // 33,
+      .log_level = espp::Logger::Verbosity::WARN
+    });
   // create the camera and transmit tasks, and the cv/m they'll use to
   // communicate
   logger.info("Creating camera and transmit tasks");
