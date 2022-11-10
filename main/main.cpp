@@ -179,7 +179,6 @@ extern "C" void app_main(void) {
   // communicate
   logger.info("Creating camera and transmit tasks");
   std::atomic<int> num_frames_captured{0};
-  std::atomic<int> num_frames_transmitted{0};
   QueueHandle_t transmit_queue = xQueueCreate(10, sizeof(Image));
   auto camera_task_fn = [&transmit_queue, &num_frames_captured, &logger](auto& m, auto& cv) {
     // take image
@@ -235,10 +234,13 @@ extern "C" void app_main(void) {
     esp_camera_fb_return(fb);
   };
   // make the tcp_client to multicast to the network
-  auto transmit_task_fn = [&transmit_queue, &num_frames_transmitted, &logger](auto& m, auto& cv) {
+  std::atomic<int> num_frames_transmitted{0};
+  std::atomic<float> transmission_elapsed{0};
+  auto transmit_task_fn = [&transmit_queue, &num_frames_transmitted, &transmission_elapsed, &logger](auto& m, auto& cv) {
     static std::string ip_address = "192.168.1.23";
     static size_t port = 8888;
     static Image image;
+    static auto start = std::chrono::high_resolution_clock::now();
     static auto tcp_client = std::make_shared<espp::TcpSocket>(espp::TcpSocket::Config{});
     // wait on the queue until we have an image ready to transmit
     if (xQueueReceive(transmit_queue, &image, portMAX_DELAY) == pdPASS) {
@@ -247,6 +249,10 @@ extern "C" void app_main(void) {
           // destroy the socket and try again on the next go-around?
           tcp_client.reset();
           tcp_client = std::make_shared<espp::TcpSocket>(espp::TcpSocket::Config{});
+        } else {
+          // reset our metrics now that we have a new connection
+          start = std::chrono::high_resolution_clock::now();
+          num_frames_transmitted = 0;
         }
       } else if (!tcp_client->transmit(std::string_view{(const char*)image.data, image.num_bytes},
                                { .wait_for_response = false })) {
@@ -254,6 +260,8 @@ extern "C" void app_main(void) {
       } else {
         num_frames_transmitted = num_frames_transmitted + 1;
       }
+      auto end = std::chrono::high_resolution_clock::now();
+      transmission_elapsed = std::chrono::duration<float>(end-start).count();
       // now free the memory we allocated
       free(image.data);
     }
@@ -279,6 +287,8 @@ extern "C" void app_main(void) {
     float elapsed = std::chrono::duration<float>(end-start).count();
     logger.info("[{:.1f}] Battery voltage: {:.2f}", elapsed, battery.get_voltage());
     logger.info("[{:.1f}] Framerate (capture): {:.1f} FPS (average)", elapsed, num_frames_captured / elapsed);
-    logger.info("[{:.1f}] Framerate (transmit): {:.1f} FPS (average)", elapsed, num_frames_transmitted / elapsed);
+    if (transmission_elapsed > 0) {
+      logger.info("[{:.1f}] Framerate (transmit): {:.1f} FPS (average)", transmission_elapsed, num_frames_transmitted / transmission_elapsed);
+    }
   }
 }
