@@ -19,7 +19,7 @@ def main(host="192.168.1.23", port=8888):
             while True:
                 # try to get all chunks of the message
                 img_data = bytearray()
-                max_recv_size = 40*1024
+                max_recv_size = 10*1024
                 remaining = max_recv_size
                 got_header = False
                 while True:
