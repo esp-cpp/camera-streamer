@@ -2,6 +2,16 @@
 
 Example for [ESP32 TimerCam](https://github.com/m5stack/TimerCam-idf) rebuilt using [ESPP](http://github.com/esp-cpp/espp) to stream video over the network
 
+It creates a task which pushes JPEG frames (1600x1200 px) from the camera into a FreeRTOS queue, along with another task that reads those frames from the queue and sends them via a TCP client socket to a TCP server. An example python TCP server is provided in [./display_frames.py](./display_frames.py).
+
+https://user-images.githubusercontent.com/213467/201152307-a0a7154a-575e-455d-91cf-437a76822974.mp4
+
+![CleanShot 2022-11-10 at 10 07 29](https://user-images.githubusercontent.com/213467/201146956-ece6ff47-a876-439c-94b6-cc2fbd67e235.png)
+
+## Hardware
+
+This sample is designed to run on the ESP32 TimerCam ([Amazon Link](https://www.amazon.com/dp/B09W2RSPGL?psc=1&ref=ppx_yo2ov_dt_b_product_details)).
+
 The ESP32 TimerCam has the following specs:
 
 * 8MB PSRAM
@@ -12,9 +22,9 @@ The ESP32 TimerCam has the following specs:
 * RTC (BM8563)
 * Battery
 
-## Full pin-out:
+### Full pin-out:
 
-### Camera Interface (OV3660):
+#### Camera Interface (OV3660):
 
 | Camera Pin | ESP32 GPIO Number |
 |------------|-------------------|
@@ -34,7 +44,7 @@ The ESP32 TimerCam has the following specs:
 | D6         | IO36              |
 | D7         | IO19              |
 
-### RTC (BM8563):
+#### RTC (BM8563):
 
 From their documentation...
 
@@ -50,14 +60,14 @@ From their actual code...
 | SCL     | IO14              |
 | SDA     | IO12              |
 
-### Battery:
+#### Battery:
 
 | Battery Pin | ESP32 GPIO Number |
 |-------------|-------------------|
 | ADC         | IO38              |
 | Output Hold | IO33              |
 
-### Input / Output:
+#### Input / Output:
 
 | I/O Function | ESP32 GPIO Number |
 |--------------|-------------------|
@@ -65,7 +75,7 @@ From their actual code...
 | Button       | IO37              |
 
 
-# Additional References
+## Additional References
 
 * https://github.com/espressif/esp32-camera
 * https://github.com/espressif/esp-idf
