@@ -2,12 +2,17 @@
 
 #include <chrono>
 
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+
 #include "driver/i2c.h"
 #include "nvs_flash.h"
 
 #include "format.hpp"
 #include "oneshot_adc.hpp"
 #include "task.hpp"
+#include "udp_socket.hpp"
+#include "tcp_socket.hpp"
 #include "wifi_sta.hpp"
 
 #include "esp_camera.h"
@@ -16,6 +21,11 @@
 #include "fs_init.hpp"
 
 using namespace std::chrono_literals;
+
+struct Image {
+  uint8_t *data;
+  uint32_t num_bytes;
+};
 
 extern "C" void app_main(void) {
   esp_err_t err;
@@ -163,9 +173,8 @@ extern "C" void app_main(void) {
   // create the camera and transmit tasks, and the cv/m they'll use to
   // communicate
   logger.info("Creating camera and transmit tasks");
-  std::mutex image_ready_cv_m;
-  std::condition_variable image_ready_cv;
-  auto camera_task_fn = [&image_ready_cv, &logger](auto& m, auto& cv) {
+  QueueHandle_t transmit_queue = xQueueCreate(10, sizeof(Image));
+  auto camera_task_fn = [&transmit_queue, &logger](auto& m, auto& cv) {
     auto start = std::chrono::high_resolution_clock::now();
     // take image
     static camera_fb_t * fb = NULL;
@@ -187,8 +196,14 @@ extern "C" void app_main(void) {
       return;
     }
 
-    // TODO: do something with it...
-    // uart_frame_send(kImage, _jpg_buf, _jpg_buf_len, true);
+    // copy the image data into a buffer and pass that buffer to the sending
+    // task notify that image is ready.
+    Image image;
+    image.num_bytes = _jpg_buf_len;
+    image.data = (uint8_t*)malloc(image.num_bytes);
+    memcpy(image.data, _jpg_buf, image.num_bytes);
+    xQueueSend(transmit_queue, &image, portMAX_DELAY);
+
     esp_camera_fb_return(fb);
 
     auto end = std::chrono::high_resolution_clock::now();
@@ -196,43 +211,35 @@ extern "C" void app_main(void) {
     logger.info("MJPG: {}KB {}s ({:.1f}fps), 0x{:02x}",
              (uint32_t)(_jpg_buf_len/1024), elapsed, 1.0f / elapsed, sig);
 
-    // notify that image is ready
-    image_ready_cv.notify_all();
     // try to get ~10 FPS
     {
       std::unique_lock<std::mutex> lk(m);
       cv.wait_until(lk, start + 100ms);
     }
   };
-  auto transmit_task_fn = [&image_ready_cv, &image_ready_cv_m, &wifi_sta, &logger](auto& m, auto& cv) {
-    {
-      // check the image_ready_cv to see if there's an image to transmit
-      std::unique_lock<std::mutex> lk(image_ready_cv_m);
-      auto cv_retval = image_ready_cv.wait_for(lk, 10ms);
-      if (cv_retval == std::cv_status::no_timeout) {
-        // we got an image, now transmit it over the network! (but let's break
-        // out of this scope to release the mutex for the cv)
-      } else {
-        // we timed out, there is no image ready, so simply return from this
-        // function.
-        return;
-      }
-    }
+  // make the udp_client to multicast to the network
+  espp::UdpSocket udp_client({});
+  auto transmit_task_fn = [&udp_client, &transmit_queue, &wifi_sta, &logger](auto& m, auto& cv) {
+    static Image image;
+    // wait on the queue until we have an image ready to transmit
+    xQueueReceive(transmit_queue, &image, portMAX_DELAY);
+    // copy the image buffer into a std::shared_ptr so that it's freed when this
+    // function returns...
+    std::unique_ptr<uint8_t> buffer_ptr(image.data);
     // first make sure we're actually still connected to WiFi
     if (!wifi_sta.is_connected()) {
-      logger.error("Not connected to WiFi, cannot send image!\n"
-                   "Waiting 1 second for WiFi to reconnect before trying again.");
-      // sleep here since wifi can take some time to reconnect and we don't want
-      // a _ton_ of logs...
-      {
-        std::unique_lock<std::mutex> lk(m);
-        cv.wait_for(lk, 1s);
-      }
+      logger.error("Not connected to WiFi, cannot send image!");
       // now return to try again.
       return;
     }
-    // TODO: here we'll actually get the image data, serialize it, and send it over
-    // WiFi.
+    // get the image data, serialize it, and send it over WiFi.
+    std::vector<uint8_t> data(image.data, image.data + image.num_bytes);
+    udp_client.send(data, {
+        .ip_address = "239.1.1.1",
+        .port = 5000,
+        .is_multicast_endpoint = true,
+        .wait_for_response = false
+      });
   };
   auto camera_task = espp::Task::make_unique({
       .name = "Camera Task",
@@ -248,7 +255,8 @@ extern "C" void app_main(void) {
   camera_task->start();
   transmit_task->start();
   while (true) {
+    logger.info("Battery voltage: {:.2f}", battery.get_voltage());
     // monitor inputs or some other (lower priority) thing here...
-    std::this_thread::sleep_for(100ms);
+    std::this_thread::sleep_for(1s);
   }
 }
