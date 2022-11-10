@@ -235,20 +235,21 @@ extern "C" void app_main(void) {
     esp_camera_fb_return(fb);
   };
   // make the tcp_client to multicast to the network
-  espp::TcpSocket tcp_client({});
-  std::string ip_address = "192.168.1.23";
-  size_t port = 8888;
-  while (!tcp_client.connect({.ip_address = ip_address, .port = port})) {
-    logger.info("Waiting for TCP server (ip={}, port={}) to come online...", ip_address, port);
-    std::this_thread::sleep_for(1s);
-  }
-  auto transmit_task_fn = [&tcp_client, &transmit_queue, &num_frames_transmitted, &logger](auto& m, auto& cv) {
+  auto transmit_task_fn = [&transmit_queue, &num_frames_transmitted, &logger](auto& m, auto& cv) {
+    static std::string ip_address = "192.168.1.23";
+    static size_t port = 8888;
     static Image image;
+    static auto tcp_client = std::make_shared<espp::TcpSocket>(espp::TcpSocket::Config{});
     // wait on the queue until we have an image ready to transmit
     if (xQueueReceive(transmit_queue, &image, portMAX_DELAY) == pdPASS) {
-      // get the image data, serialize it, and send it over WiFi.
-      if (!tcp_client.transmit(std::string_view{(const char*)image.data, image.num_bytes},
-                               { .wait_for_response = false })){
+      if (!tcp_client->is_connected()) {
+        if (!tcp_client->connect({.ip_address = ip_address, .port = port})) {
+          // destroy the socket and try again on the next go-around?
+          tcp_client.reset();
+          tcp_client = std::make_shared<espp::TcpSocket>(espp::TcpSocket::Config{});
+        }
+      } else if (!tcp_client->transmit(std::string_view{(const char*)image.data, image.num_bytes},
+                               { .wait_for_response = false })) {
         logger.error("couldn't transmit the data!");
       } else {
         num_frames_transmitted = num_frames_transmitted + 1;
