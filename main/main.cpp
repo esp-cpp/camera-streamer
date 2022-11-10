@@ -287,8 +287,10 @@ extern "C" void app_main(void) {
     float elapsed = std::chrono::duration<float>(end-start).count();
     logger.info("[{:.1f}] Battery voltage: {:.2f}", elapsed, battery.get_voltage());
     logger.info("[{:.1f}] Framerate (capture): {:.1f} FPS (average)", elapsed, num_frames_captured / elapsed);
-    if (transmission_elapsed > 0) {
-      logger.info("[{:.1f}] Framerate (transmit): {:.1f} FPS (average)", transmission_elapsed, num_frames_transmitted / transmission_elapsed);
+    // this is an atomic float / shared variable, so let's access it once here
+    float tx_elapsed = transmission_elapsed;
+    if (tx_elapsed > 0) {
+      logger.info("[{:.1f}] Framerate (transmit): {:.1f} FPS (average)", tx_elapsed, num_frames_transmitted / tx_elapsed);
     }
   }
 }
