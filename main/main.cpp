@@ -10,6 +10,7 @@
 #include "nvs_flash.h"
 
 #include "format.hpp"
+#include "led.hpp"
 #include "oneshot_adc.hpp"
 #include "task.hpp"
 #include "tcp_socket.hpp"
@@ -42,8 +43,22 @@ extern "C" void app_main(void) {
   // initialize file system
   logger.info("Initializing littlefs");
   fs_init();
-  // TODO: initialize LED
+  // initialize LED
   logger.info("Initializing LED");
+  std::vector<espp::Led::ChannelConfig> led_channels{
+    {
+      .gpio = 2,
+      .channel = LEDC_CHANNEL_5,
+      .timer = LEDC_TIMER_2,
+    }
+  };
+  espp::Led led(espp::Led::Config{
+      .timer = LEDC_TIMER_2,
+      .frequency_hz = 5000,
+      .channels = led_channels,
+      .duty_resolution = LEDC_TIMER_10_BIT,
+    });
+  led.set_fade_with_time(led_channels[0].channel, 100.0f, 10000);
   // initialize WiFi
   logger.info("Initializing WiFi");
   espp::WifiSta wifi_sta({
@@ -280,9 +295,23 @@ extern "C" void app_main(void) {
   camera_task->start();
   transmit_task->start();
   auto start = std::chrono::high_resolution_clock::now();
+  auto led_channel = led_channels[0].channel;
   while (true) {
-    // monitor inputs or some other (lower priority) thing here...
     std::this_thread::sleep_for(1s);
+    // pulse the LED very slowly...
+    if (led.can_change(led_channel)) {
+      // if the fade has finished, then pulse it again...
+      auto maybe_duty = led.get_duty(led_channel);
+      if (maybe_duty.has_value()) {
+        auto duty = maybe_duty.value();
+        if (duty < 50.0f) {
+          led.set_fade_with_time(led_channel, 100.0f, 5000);
+        } else {
+          led.set_fade_with_time(led_channel, 0.0f, 5000);
+        }
+      }
+    }
+    // print out some stats (battery, framerate)
     auto end = std::chrono::high_resolution_clock::now();
     float elapsed = std::chrono::duration<float>(end-start).count();
     logger.info("[{:.1f}] Battery voltage: {:.2f}", elapsed, battery.get_voltage());
