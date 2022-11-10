@@ -4,7 +4,7 @@ import socket
 from turbojpeg import TurboJPEG
 import time
 
-def main(host="192.168.1.23", port=8888):
+def main(host="0.0.0.0", port=8888):
     header = b'\xaa\xbb\xcc\xdd'
     jpeg = TurboJPEG()
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -68,7 +68,7 @@ def main(host="192.168.1.23", port=8888):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(prog="display_frames",
                                      description="Start TCP server to receive JPEG encoded images and display them")
-    parser.add_argument('-H', '--host', type=str, default="192.168.1.23",
+    parser.add_argument('-H', '--host', type=str, default="0.0.0.0",
                         help="IP address to bind to")
     parser.add_argument('-p', '--port', type=int, default=8888,
                         help="Port number to bind to")
