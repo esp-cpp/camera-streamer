@@ -90,7 +90,7 @@ extern "C" void app_main(void) {
     .frame_size = FRAMESIZE_UXGA,//QQVGA-UXGA, For ESP32, do not use sizes above QVGA when not JPEG. The performance of the ESP32-S series has improved a lot, but JPEG mode always gives better frame rates.
 
     .jpeg_quality = 15, //0-63, for OV series camera sensors, lower number means higher quality
-    .fb_count = 3, //When jpeg mode is used, if fb_count more than one, the driver will work in continuous mode.
+    .fb_count = 2, //When jpeg mode is used, if fb_count more than one, the driver will work in continuous mode.
     .grab_mode = CAMERA_GRAB_LATEST // CAMERA_GRAB_WHEN_EMPTY // . Sets when buffers should be filled
   };
   err = esp_camera_init(&camera_config);
@@ -272,12 +272,12 @@ extern "C" void app_main(void) {
   transmit_task->start();
   auto start = std::chrono::high_resolution_clock::now();
   while (true) {
-    logger.info("Battery voltage: {:.2f}", battery.get_voltage());
-    auto end = std::chrono::high_resolution_clock::now();
-    float elapsed = std::chrono::duration<float>(end-start).count();
-    logger.info("Framerate (capture): {:.1f} FPS (average)", num_frames_captured / elapsed);
-    logger.info("Framerate (transmit): {:.1f} FPS (average)", num_frames_transmitted / elapsed);
     // monitor inputs or some other (lower priority) thing here...
     std::this_thread::sleep_for(1s);
+    auto end = std::chrono::high_resolution_clock::now();
+    float elapsed = std::chrono::duration<float>(end-start).count();
+    logger.info("[{:.1f}] Battery voltage: {:.2f}", elapsed, battery.get_voltage());
+    logger.info("[{:.1f}] Framerate (capture): {:.1f} FPS (average)", elapsed, num_frames_captured / elapsed);
+    logger.info("[{:.1f}] Framerate (transmit): {:.1f} FPS (average)", elapsed, num_frames_transmitted / elapsed);
   }
 }
