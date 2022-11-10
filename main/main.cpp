@@ -5,13 +5,13 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+#include "esp_heap_caps.h"
 #include "driver/i2c.h"
 #include "nvs_flash.h"
 
 #include "format.hpp"
 #include "oneshot_adc.hpp"
 #include "task.hpp"
-#include "udp_socket.hpp"
 #include "tcp_socket.hpp"
 #include "wifi_sta.hpp"
 
@@ -56,6 +56,11 @@ extern "C" void app_main(void) {
           logger.info("got IP: {}.{}.{}.{}", IP2STR(&eventdata->ip_info.ip));
         }
         });
+  // wait for network
+  while (!wifi_sta.is_connected()) {
+    logger.info("waiting for wifi connection...");
+    std::this_thread::sleep_for(1s);
+  }
   // initialize camera
   logger.info("Initializing camera");
   static camera_config_t camera_config = {
@@ -173,9 +178,10 @@ extern "C" void app_main(void) {
   // create the camera and transmit tasks, and the cv/m they'll use to
   // communicate
   logger.info("Creating camera and transmit tasks");
+  std::atomic<int> num_frames_captured{0};
+  std::atomic<int> num_frames_transmitted{0};
   QueueHandle_t transmit_queue = xQueueCreate(10, sizeof(Image));
-  auto camera_task_fn = [&transmit_queue, &logger](auto& m, auto& cv) {
-    auto start = std::chrono::high_resolution_clock::now();
+  auto camera_task_fn = [&transmit_queue, &num_frames_captured, &logger](auto& m, auto& cv) {
     // take image
     static camera_fb_t * fb = NULL;
     static size_t _jpg_buf_len;
@@ -196,50 +202,60 @@ extern "C" void app_main(void) {
       return;
     }
 
-    // copy the image data into a buffer and pass that buffer to the sending
-    // task notify that image is ready.
-    Image image;
-    image.num_bytes = _jpg_buf_len;
-    image.data = (uint8_t*)malloc(image.num_bytes);
-    memcpy(image.data, _jpg_buf, image.num_bytes);
-    xQueueSend(transmit_queue, &image, portMAX_DELAY);
+    // only copy / allocate if there is space in the queue, otherwise just
+    // discard this image.
+    auto num_spots = uxQueueSpacesAvailable(transmit_queue);
+    if (num_spots > 0) {
+      // copy the image data into a buffer and pass that buffer to the sending
+      // task notify that image is ready.
+      Image image;
+      image.num_bytes = _jpg_buf_len + 8;
+      image.data = (uint8_t*)heap_caps_malloc(image.num_bytes, MALLOC_CAP_SPIRAM);
+      if (image.data != nullptr) {
+        num_frames_captured += 1;
+        // header
+        image.data[0] = 0xAA;
+        image.data[1] = 0xBB;
+        image.data[2] = 0xCC;
+        image.data[3] = 0xDD;
+        // length
+        image.data[4] = (_jpg_buf_len >> 24) & 0xFF;
+        image.data[5] = (_jpg_buf_len >> 16) & 0xFF;
+        image.data[6] = (_jpg_buf_len >> 8) & 0xFF;
+        image.data[7] = (_jpg_buf_len >> 0) & 0xFF;
+        // data
+        memcpy(&image.data[8], _jpg_buf, _jpg_buf_len);
+        if (xQueueSend(transmit_queue, &image, portMAX_DELAY) != pdPASS) {
+          // couldn't transmit the image, so we should free the memory here
+          free(image.data);
+        }
+      }
+    }
 
     esp_camera_fb_return(fb);
-
-    auto end = std::chrono::high_resolution_clock::now();
-    float elapsed = std::chrono::duration<float>(end-start).count();
-    logger.info("MJPG: {}KB {}s ({:.1f}fps), 0x{:02x}",
-             (uint32_t)(_jpg_buf_len/1024), elapsed, 1.0f / elapsed, sig);
-
-    // try to get ~10 FPS
-    {
-      std::unique_lock<std::mutex> lk(m);
-      cv.wait_until(lk, start + 100ms);
-    }
   };
-  // make the udp_client to multicast to the network
-  espp::UdpSocket udp_client({});
-  auto transmit_task_fn = [&udp_client, &transmit_queue, &wifi_sta, &logger](auto& m, auto& cv) {
+  // make the tcp_client to multicast to the network
+  espp::TcpSocket tcp_client({});
+  std::string ip_address = "192.168.1.23";
+  size_t port = 8888;
+  while (!tcp_client.connect({.ip_address = ip_address, .port = port})) {
+    logger.info("Waiting for TCP server (ip={}, port={}) to come online...", ip_address, port);
+    std::this_thread::sleep_for(1s);
+  }
+  auto transmit_task_fn = [&tcp_client, &transmit_queue, &num_frames_transmitted, &logger](auto& m, auto& cv) {
     static Image image;
     // wait on the queue until we have an image ready to transmit
-    xQueueReceive(transmit_queue, &image, portMAX_DELAY);
-    // copy the image buffer into a std::shared_ptr so that it's freed when this
-    // function returns...
-    std::unique_ptr<uint8_t> buffer_ptr(image.data);
-    // first make sure we're actually still connected to WiFi
-    if (!wifi_sta.is_connected()) {
-      logger.error("Not connected to WiFi, cannot send image!");
-      // now return to try again.
-      return;
+    if (xQueueReceive(transmit_queue, &image, portMAX_DELAY) == pdPASS) {
+      // get the image data, serialize it, and send it over WiFi.
+      if (!tcp_client.transmit(std::string_view{(const char*)image.data, image.num_bytes},
+                               { .wait_for_response = false })){
+        logger.error("couldn't transmit the data!");
+      } else {
+        num_frames_transmitted = num_frames_transmitted + 1;
+      }
+      // now free the memory we allocated
+      free(image.data);
     }
-    // get the image data, serialize it, and send it over WiFi.
-    std::vector<uint8_t> data(image.data, image.data + image.num_bytes);
-    udp_client.send(data, {
-        .ip_address = "239.1.1.1",
-        .port = 5000,
-        .is_multicast_endpoint = true,
-        .wait_for_response = false
-      });
   };
   auto camera_task = espp::Task::make_unique({
       .name = "Camera Task",
@@ -254,8 +270,13 @@ extern "C" void app_main(void) {
   logger.info("Starting camera and transmit tasks");
   camera_task->start();
   transmit_task->start();
+  auto start = std::chrono::high_resolution_clock::now();
   while (true) {
     logger.info("Battery voltage: {:.2f}", battery.get_voltage());
+    auto end = std::chrono::high_resolution_clock::now();
+    float elapsed = std::chrono::duration<float>(end-start).count();
+    logger.info("Framerate (capture): {:.1f} FPS (average)", num_frames_captured / elapsed);
+    logger.info("Framerate (transmit): {:.1f} FPS (average)", num_frames_transmitted / elapsed);
     // monitor inputs or some other (lower priority) thing here...
     std::this_thread::sleep_for(1s);
   }
