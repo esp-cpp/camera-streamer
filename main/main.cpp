@@ -90,7 +90,7 @@ extern "C" void app_main(void) {
     .frame_size = FRAMESIZE_UXGA,//QQVGA-UXGA, For ESP32, do not use sizes above QVGA when not JPEG. The performance of the ESP32-S series has improved a lot, but JPEG mode always gives better frame rates.
 
     .jpeg_quality = 15, //0-63, for OV series camera sensors, lower number means higher quality
-    .fb_count = 1, //When jpeg mode is used, if fb_count more than one, the driver will work in continuous mode.
+    .fb_count = 3, //When jpeg mode is used, if fb_count more than one, the driver will work in continuous mode.
     .grab_mode = CAMERA_GRAB_LATEST // CAMERA_GRAB_WHEN_EMPTY // . Sets when buffers should be filled
   };
   err = esp_camera_init(&camera_config);
