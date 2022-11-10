@@ -6,7 +6,7 @@ It creates a task which pushes JPEG frames (1600x1200 px) from the camera into a
 
 https://user-images.githubusercontent.com/213467/201152307-a0a7154a-575e-455d-91cf-437a76822974.mp4
 
-![CleanShot 2022-11-10 at 10 07 29](https://user-images.githubusercontent.com/213467/201146956-ece6ff47-a876-439c-94b6-cc2fbd67e235.png)
+![CleanShot 2022-11-10 at 17 12 10](https://user-images.githubusercontent.com/213467/201225440-3b7064ba-535f-4328-95a4-86c274354107.png)
 
 ## Hardware
 
