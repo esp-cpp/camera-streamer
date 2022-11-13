@@ -45,9 +45,8 @@ def main(host="0.0.0.0", port=8888):
                             img_data.extend(data)
                         else:
                             print("got more data than we needed:", len(data), remaining)
-                            needed_length = len(data) - remaining
+                            img_data.extend(data[:remaining])
                             remaining = 0
-                            img_data.extend(data[:needed_length])
                     if got_header and remaining <= 0:
                         break;
                 end = time.time()
