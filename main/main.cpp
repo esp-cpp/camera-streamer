@@ -77,6 +77,24 @@ extern "C" void app_main(void) {
     std::this_thread::sleep_for(1s);
   }
   // initialize camera
+  /**
+   * @note display sizes supported:
+   * *  QVGA:  320x240
+   * *  WQVGA: 400x240
+   * *  HVGA:  480x320
+   * *  VGA:   640x480
+   * *  WVGA:  768x480
+   * *  FWVGA: 854x480
+   * *  SVGA:  800x600
+   * *  DVGA:  960x640
+   * *  WSVGA: 1024x600
+   * *  XGA:   1024x768
+   * *  WXGA:  1280x800
+   * *  WSXGA: 1440x900
+   * *  SXGA:  1280x1024
+   * *  UXGA:  1600x1200
+   */
+
   logger.info("Initializing camera");
   static camera_config_t camera_config = {
     .pin_pwdn  = -1,
@@ -102,7 +120,7 @@ extern "C" void app_main(void) {
     .ledc_channel = LEDC_CHANNEL_0,
 
     .pixel_format = PIXFORMAT_JPEG,//YUV422,GRAYSCALE,RGB565,JPEG
-    .frame_size = FRAMESIZE_UXGA,//QQVGA-UXGA, For ESP32, do not use sizes above QVGA when not JPEG. The performance of the ESP32-S series has improved a lot, but JPEG mode always gives better frame rates.
+    .frame_size = FRAMESIZE_UXGA,// QVGA-UXGA, For ESP32, do not use sizes above QVGA when not JPEG. The performance of the ESP32-S series has improved a lot, but JPEG mode always gives better frame rates.
 
     .jpeg_quality = 15, //0-63, for OV series camera sensors, lower number means higher quality
     .fb_count = 2, //When jpeg mode is used, if fb_count more than one, the driver will work in continuous mode.
@@ -248,7 +266,7 @@ extern "C" void app_main(void) {
 
     esp_camera_fb_return(fb);
   };
-  // make the tcp_client to multicast to the network
+  // make the tcp_client to transmit to the network
   std::atomic<int> num_frames_transmitted{0};
   std::atomic<float> transmission_elapsed{0};
   auto transmit_task_fn = [&transmit_queue, &num_frames_transmitted, &transmission_elapsed, &logger](auto& m, auto& cv) {
