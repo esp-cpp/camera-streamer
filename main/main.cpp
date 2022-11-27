@@ -59,7 +59,6 @@ extern "C" void app_main(void) {
       .channels = led_channels,
       .duty_resolution = LEDC_TIMER_10_BIT,
     });
-  led.set_fade_with_time(led_channels[0].channel, 100.0f, 10000);
   // initialize WiFi
   logger.info("Initializing WiFi");
   espp::WifiSta wifi_sta({
@@ -73,8 +72,11 @@ extern "C" void app_main(void) {
         }
         });
   // wait for network
+  float duty = 0.0f;
   while (!wifi_sta.is_connected()) {
     logger.info("waiting for wifi connection...");
+    led.set_duty(led_channels[0].channel, duty);
+    duty = duty == 0.0f ? 50.0f : 0.0f;
     std::this_thread::sleep_for(1s);
   }
   // use UDP multicast to listen for where the server is
@@ -94,17 +96,20 @@ extern "C" void app_main(void) {
     .is_multicast_endpoint = true,
     .multicast_group = multicast_group,
     .on_receive_callback = [&found_receiver, &receiver_ip](auto& data, auto& source) -> auto {
-      fmt::print("Server received: {}\n"
-                 "    from source: {}:{}\n",
-                 data, source.address, source.port);
       receiver_ip = source.address;
+      if (!found_receiver) {
+        fmt::print("Found receiver server!\n");
+      }
       found_receiver = true;
       return std::nullopt;
     }
   };
   server_socket.start_receiving(server_task_config, server_config);
+  duty = 50.0f;
   while (!found_receiver) {
     logger.info("waiting for receiver to multicast their info over 239.1.1.1...");
+    led.set_duty(led_channels[0].channel, duty);
+    duty = duty == 50.0f ? 100.0f : 50.0f;
     std::this_thread::sleep_for(1s);
   }
   // initialize camera
@@ -289,7 +294,7 @@ extern "C" void app_main(void) {
         image.data[7] = (_jpg_buf_len >> 0) & 0xFF;
         // data
         memcpy(&image.data[8], _jpg_buf, _jpg_buf_len);
-        if (xQueueSend(transmit_queue, &image, 100 / portTICK_PERIOD_MS) != pdPASS) {
+        if (xQueueSend(transmit_queue, &image, portMAX_DELAY) != pdPASS) {
           // couldn't transmit the image, so we should free the memory here
           free(image.data);
         }
@@ -303,28 +308,32 @@ extern "C" void app_main(void) {
   // make the tcp_client to transmit to the network
   std::atomic<int> num_frames_transmitted{0};
   std::atomic<float> transmission_elapsed{0};
-  auto transmit_task_fn = [&receiver_ip, &transmit_queue, &num_frames_transmitted, &transmission_elapsed, &logger](auto& m, auto& cv) {
+  auto transmit_task_fn = [&found_receiver, &receiver_ip, &transmit_queue, &num_frames_transmitted, &transmission_elapsed, &logger](auto& m, auto& cv) {
     static size_t port = 8888;
     static Image image;
     static auto start = std::chrono::high_resolution_clock::now();
     static auto tcp_client = std::make_shared<espp::TcpSocket>(espp::TcpSocket::Config{});
     // wait on the queue until we have an image ready to transmit
-    if (xQueueReceive(transmit_queue, &image, 100 / portTICK_PERIOD_MS) == pdPASS) {
-      if (!tcp_client->is_connected()) {
+    if (xQueueReceive(transmit_queue, &image, portMAX_DELAY) == pdPASS) {
+      if (!found_receiver || !tcp_client->is_connected()) {
+        logger.warn("Client is not connected...");
         if (!tcp_client->connect({.ip_address = receiver_ip, .port = port})) {
-          // destroy the socket and try again on the next go-around?
-          tcp_client.reset();
-          tcp_client = std::make_shared<espp::TcpSocket>(espp::TcpSocket::Config{});
+          logger.error("Client could not connect");
+          tcp_client->reinit();
+          found_receiver = false;
         } else {
           // reset our metrics now that we have a new connection
           start = std::chrono::high_resolution_clock::now();
           num_frames_transmitted = 0;
         }
-      } else if (!tcp_client->transmit(std::string_view{(const char*)image.data, image.num_bytes},
-                               { .wait_for_response = false })) {
-        logger.error("couldn't transmit the data!");
       } else {
-        num_frames_transmitted = num_frames_transmitted + 1;
+        logger.debug("Transmitting image {}B", image.num_bytes);
+        if (!tcp_client->transmit(std::string_view{(const char*)image.data, image.num_bytes},
+                                  { .wait_for_response = false })) {
+          logger.error("couldn't transmit the data!");
+        } else {
+          num_frames_transmitted = num_frames_transmitted + 1;
+        }
       }
       // now free the memory we allocated
       free(image.data);
