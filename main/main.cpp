@@ -14,6 +14,7 @@
 #include "oneshot_adc.hpp"
 #include "task.hpp"
 #include "tcp_socket.hpp"
+#include "udp_socket.hpp"
 #include "wifi_sta.hpp"
 
 #include "esp_camera.h"
@@ -76,6 +77,36 @@ extern "C" void app_main(void) {
     logger.info("waiting for wifi connection...");
     std::this_thread::sleep_for(1s);
   }
+  // use UDP multicast to listen for where the server is
+  std::string multicast_group = "239.1.1.1";
+  size_t port = 5000;
+  espp::UdpSocket server_socket({.log_level=espp::Logger::Verbosity::WARN});
+  auto server_task_config = espp::Task::Config{
+    .name = "UdpServer",
+    .callback = nullptr,
+    .stack_size_bytes = 6 * 1024,
+  };
+  std::atomic<bool> found_receiver = false;
+  std::string receiver_ip;
+  auto server_config = espp::UdpSocket::ReceiveConfig{
+    .port = port,
+    .buffer_size = 1024,
+    .is_multicast_endpoint = true,
+    .multicast_group = multicast_group,
+    .on_receive_callback = [&found_receiver, &receiver_ip](auto& data, auto& source) -> auto {
+      fmt::print("Server received: {}\n"
+                 "    from source: {}:{}\n",
+                 data, source.address, source.port);
+      receiver_ip = source.address;
+      found_receiver = true;
+      return std::nullopt;
+    }
+  };
+  server_socket.start_receiving(server_task_config, server_config);
+  while (!found_receiver) {
+    logger.info("waiting for receiver to multicast their info over 239.1.1.1...");
+    std::this_thread::sleep_for(1s);
+  }
   // initialize camera
   /**
    * @note display sizes supported:
@@ -120,7 +151,7 @@ extern "C" void app_main(void) {
     .ledc_channel = LEDC_CHANNEL_0,
 
     .pixel_format = PIXFORMAT_JPEG,//YUV422,GRAYSCALE,RGB565,JPEG
-    .frame_size = FRAMESIZE_UXGA,// QVGA-UXGA, For ESP32, do not use sizes above QVGA when not JPEG. The performance of the ESP32-S series has improved a lot, but JPEG mode always gives better frame rates.
+    .frame_size = FRAMESIZE_QVGA,// QVGA-UXGA, For ESP32, do not use sizes above QVGA when not JPEG. The performance of the ESP32-S series has improved a lot, but JPEG mode always gives better frame rates.
 
     .jpeg_quality = 15, //0-63, for OV series camera sensors, lower number means higher quality
     .fb_count = 2, //When jpeg mode is used, if fb_count more than one, the driver will work in continuous mode.
@@ -269,8 +300,7 @@ extern "C" void app_main(void) {
   // make the tcp_client to transmit to the network
   std::atomic<int> num_frames_transmitted{0};
   std::atomic<float> transmission_elapsed{0};
-  auto transmit_task_fn = [&transmit_queue, &num_frames_transmitted, &transmission_elapsed, &logger](auto& m, auto& cv) {
-    static std::string ip_address = "192.168.1.23";
+  auto transmit_task_fn = [&receiver_ip, &transmit_queue, &num_frames_transmitted, &transmission_elapsed, &logger](auto& m, auto& cv) {
     static size_t port = 8888;
     static Image image;
     static auto start = std::chrono::high_resolution_clock::now();
@@ -278,7 +308,7 @@ extern "C" void app_main(void) {
     // wait on the queue until we have an image ready to transmit
     if (xQueueReceive(transmit_queue, &image, portMAX_DELAY) == pdPASS) {
       if (!tcp_client->is_connected()) {
-        if (!tcp_client->connect({.ip_address = ip_address, .port = port})) {
+        if (!tcp_client->connect({.ip_address = receiver_ip, .port = port})) {
           // destroy the socket and try again on the next go-around?
           tcp_client.reset();
           tcp_client = std::make_shared<espp::TcpSocket>(espp::TcpSocket::Config{});
