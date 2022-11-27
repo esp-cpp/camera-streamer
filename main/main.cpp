@@ -243,7 +243,7 @@ extern "C" void app_main(void) {
   // communicate
   logger.info("Creating camera and transmit tasks");
   std::atomic<int> num_frames_captured{0};
-  QueueHandle_t transmit_queue = xQueueCreate(10, sizeof(Image));
+  QueueHandle_t transmit_queue = xQueueCreate(2, sizeof(Image));
   auto camera_task_fn = [&transmit_queue, &num_frames_captured, &logger](auto& m, auto& cv) {
     // take image
     static camera_fb_t * fb = NULL;
@@ -265,6 +265,8 @@ extern "C" void app_main(void) {
       return;
     }
 
+    num_frames_captured += 1;
+
     // only copy / allocate if there is space in the queue, otherwise just
     // discard this image.
     auto num_spots = uxQueueSpacesAvailable(transmit_queue);
@@ -275,7 +277,6 @@ extern "C" void app_main(void) {
       image.num_bytes = _jpg_buf_len + 8;
       image.data = (uint8_t*)heap_caps_malloc(image.num_bytes, MALLOC_CAP_SPIRAM);
       if (image.data != nullptr) {
-        num_frames_captured += 1;
         // header
         image.data[0] = 0xAA;
         image.data[1] = 0xBB;
@@ -288,10 +289,12 @@ extern "C" void app_main(void) {
         image.data[7] = (_jpg_buf_len >> 0) & 0xFF;
         // data
         memcpy(&image.data[8], _jpg_buf, _jpg_buf_len);
-        if (xQueueSend(transmit_queue, &image, portMAX_DELAY) != pdPASS) {
+        if (xQueueSend(transmit_queue, &image, 100 / portTICK_PERIOD_MS) != pdPASS) {
           // couldn't transmit the image, so we should free the memory here
           free(image.data);
         }
+      } else {
+        logger.error("Could not allocate for camera image!");
       }
     }
 
@@ -306,7 +309,7 @@ extern "C" void app_main(void) {
     static auto start = std::chrono::high_resolution_clock::now();
     static auto tcp_client = std::make_shared<espp::TcpSocket>(espp::TcpSocket::Config{});
     // wait on the queue until we have an image ready to transmit
-    if (xQueueReceive(transmit_queue, &image, portMAX_DELAY) == pdPASS) {
+    if (xQueueReceive(transmit_queue, &image, 100 / portTICK_PERIOD_MS) == pdPASS) {
       if (!tcp_client->is_connected()) {
         if (!tcp_client->connect({.ip_address = receiver_ip, .port = port})) {
           // destroy the socket and try again on the next go-around?
@@ -323,11 +326,11 @@ extern "C" void app_main(void) {
       } else {
         num_frames_transmitted = num_frames_transmitted + 1;
       }
-      auto end = std::chrono::high_resolution_clock::now();
-      transmission_elapsed = std::chrono::duration<float>(end-start).count();
       // now free the memory we allocated
       free(image.data);
     }
+    auto end = std::chrono::high_resolution_clock::now();
+    transmission_elapsed = std::chrono::duration<float>(end-start).count();
   };
   auto camera_task = espp::Task::make_unique({
       .name = "Camera Task",
