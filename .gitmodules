@@ -4,6 +4,3 @@
 [submodule "components/esp32-camera"]
 	path = components/esp32-camera
 	url = git@github.com:espressif/esp32-camera
-[submodule "thirdparty/micro-rtsp"]
-	path = thirdparty/micro-rtsp
-	url = git@github.com:geeksville/Micro-RTSP
