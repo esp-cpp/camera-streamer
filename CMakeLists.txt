@@ -13,7 +13,7 @@ add_compile_definitions(BOARD_HAS_PSRAM)
 
 set(
   COMPONENTS
-  "main esptool_py esp_psram esp_littlefs task format monitor wifi bm8563 battery esp32-camera socket led"
+  "main esptool_py esp_psram esp_littlefs task format monitor wifi bm8563 battery esp32-camera socket led rtsp"
   CACHE STRING
   "List of components to include"
   )
