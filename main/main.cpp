@@ -175,7 +175,7 @@ extern "C" void app_main(void) {
     printf("Couldn't listen!\n");
   }
 
-  auto camera_task_fn = [&streamer](auto &m, auto& cv) {
+  auto camera_task_fn = [&streamer](auto &m, auto& cv) -> bool {
     static float seconds_per_frame = 0.1f;
     static auto start = std::chrono::high_resolution_clock::now();
     static auto last_image_time = start;
@@ -192,9 +192,10 @@ extern "C" void app_main(void) {
     }
     std::unique_lock<std::mutex> lk(m);
     cv.wait_for(lk, 1ms);
+    return false;
   };
 
-  auto server_task_fn = [&streamer, &MasterSocket](auto &m, auto& cv) {
+  auto server_task_fn = [&streamer, &MasterSocket](auto &m, auto& cv) -> bool {
     fmt::print("Server accepting client...\n");
     sockaddr_in ClientAddr;                                   // address parameters of a new RTSP client
     socklen_t ClientAddrLen = sizeof(ClientAddr);
@@ -206,6 +207,7 @@ extern "C" void app_main(void) {
 
     std::unique_lock<std::mutex> lk(m);
     cv.wait_for(lk, 30ms);
+    return false;
   };
   auto server_task = espp::Task::make_unique(espp::Task::Config{
       .name = "Server Task",
