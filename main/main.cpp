@@ -10,6 +10,7 @@
 #include "nvs_flash.h"
 
 #include "format.hpp"
+#include "gaussian.hpp"
 #include "led.hpp"
 #include "oneshot_adc.hpp"
 #include "task.hpp"
@@ -223,6 +224,24 @@ extern "C" void app_main(void) {
       .priority = 10
     });
 
+  float breathing_period = 3.5f; // seconds
+  espp::Gaussian gaussian({.gamma = 0.1f, .alpha = 1.0f, .beta = 0.5f});
+  auto breathe = [&gaussian, &breathing_period]() -> float {
+    static auto breathing_start = std::chrono::high_resolution_clock::now();
+    auto now = std::chrono::high_resolution_clock::now();
+    auto elapsed = std::chrono::duration<float>(now - breathing_start).count();
+    float t = std::fmod(elapsed, breathing_period) / breathing_period;
+    return gaussian(t);
+  };
+  auto led_callback = [&breathe, &led, &led_channels](auto &m, auto &cv) -> bool {
+    led.set_duty(led_channels[0].channel, 100.0f * breathe());
+    std::unique_lock<std::mutex> lk(m);
+    cv.wait_for(lk, 10ms);
+    return false;
+  };
+  auto led_task = espp::Task::make_unique({.name = "breathe", .callback = led_callback});
+  led_task->start();
+
   logger.info("Starting camera and transmit tasks");
   // server_task->start();
   // camera_task->start();
@@ -238,7 +257,7 @@ extern "C" void app_main(void) {
       CRtspSession rtsp(ClientSocket, streamer);     // our threads RTSP session and state
 
       while (!rtsp.m_stopped) {
-        uint32_t timeout_ms = 400;
+        uint32_t timeout_ms = 100;
         if(!rtsp.handleRequests(timeout_ms)) {
           struct timeval now;
           gettimeofday(&now, NULL); // crufty msecish timer
@@ -404,19 +423,6 @@ extern "C" void app_main(void) {
   auto led_channel = led_channels[0].channel;
   while (true) {
     std::this_thread::sleep_for(1s);
-    // pulse the LED very slowly...
-    if (led.can_change(led_channel)) {
-      // if the fade has finished, then pulse it again...
-      auto maybe_duty = led.get_duty(led_channel);
-      if (maybe_duty.has_value()) {
-        auto duty = maybe_duty.value();
-        if (duty < 50.0f) {
-          led.set_fade_with_time(led_channel, 100.0f, 5000);
-        } else {
-          led.set_fade_with_time(led_channel, 0.0f, 5000);
-        }
-      }
-    }
     // print out some stats (battery, framerate)
     auto end = std::chrono::high_resolution_clock::now();
     float elapsed = std::chrono::duration<float>(end-start).count();
