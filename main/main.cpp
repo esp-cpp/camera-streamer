@@ -21,26 +21,8 @@
 #include "esp_camera.h"
 #include "battery.hpp"
 #include "bm8563.hpp"
-#include "fs_init.hpp"
 
-#include "OV2640.h"
-#include "OV2640Streamer.h"
-#include "CRtspSession.h"
-#include "Cstreamer.h"
-
-class Streamer : public CStreamer {
-public:
-  Streamer() : CStreamer(320, 240) {
-    // TODO: do more here?
-  }
-
-  virtual void streamImage(uint32_t currMsec) override {
-    // TODO: get image data from camera here
-    BufPtr bytes = nullptr;
-    uint32_t len = 0;
-    streamFrame(bytes, len, currMsec);
-  }
-};
+#include "rtsp_server.hpp"
 
 using namespace std::chrono_literals;
 
@@ -56,9 +38,7 @@ extern "C" void app_main(void) {
     ret = nvs_flash_init();
   }
   ESP_ERROR_CHECK(ret);
-  // initialize file system
-  logger.info("Initializing littlefs");
-  fs_init();
+
   // initialize LED
   logger.info("Initializing LED");
   std::vector<espp::Led::ChannelConfig> led_channels{
@@ -74,16 +54,19 @@ extern "C" void app_main(void) {
       .channels = led_channels,
       .duty_resolution = LEDC_TIMER_10_BIT,
     });
+
   // initialize WiFi
   logger.info("Initializing WiFi");
+  std::string server_address;
   espp::WifiSta wifi_sta({
       .ssid = CONFIG_ESP_WIFI_SSID,
         .password = CONFIG_ESP_WIFI_PASSWORD,
         .num_connect_retries = CONFIG_ESP_MAXIMUM_RETRY,
         .on_connected = nullptr,
         .on_disconnected = nullptr,
-        .on_got_ip = [&logger](ip_event_got_ip_t* eventdata) {
-          logger.info("got IP: {}.{}.{}.{}", IP2STR(&eventdata->ip_info.ip));
+        .on_got_ip = [&logger, &server_address](ip_event_got_ip_t* eventdata) {
+          server_address = fmt::format("{}.{}.{}.{}", IP2STR(&eventdata->ip_info.ip));
+          logger.info("got IP: {}", server_address);
         }
         });
   // wait for network
@@ -115,8 +98,6 @@ extern "C" void app_main(void) {
    */
 
   logger.info("Initializing camera");
-  OV2640 cam;
-  CStreamer *streamer;
   static camera_config_t camera_config = {
     .pin_pwdn  = -1,
     .pin_reset = 15,
@@ -147,82 +128,10 @@ extern "C" void app_main(void) {
     .fb_count = 2, //When jpeg mode is used, if fb_count more than one, the driver will work in continuous mode.
     .grab_mode = CAMERA_GRAB_LATEST // CAMERA_GRAB_WHEN_EMPTY // . Sets when buffers should be filled
   };
-  cam.init(camera_config);
-  streamer = new OV2640Streamer(cam);
-
-  // err = esp_camera_init(&camera_config);
-  // if (err != ESP_OK) {
-  //   logger.error("Could not initialize camera: {} '{}'", err, esp_err_to_name(err));
-  // }
-
-  SOCKET MasterSocket;                                      // our masterSocket(socket that listens for RTSP client connections)
-  sockaddr_in ServerAddr;                                   // server address parameters
-
-  ServerAddr.sin_family      = AF_INET;
-  ServerAddr.sin_addr.s_addr = INADDR_ANY;
-  ServerAddr.sin_port        = htons(8554);                 // listen on RTSP port 8554
-  MasterSocket               = socket(AF_INET,SOCK_STREAM,0);
-
-  int enable = 1;
-  if (setsockopt(MasterSocket, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int)) < 0) {
-    printf("setsockopt(SO_REUSEADDR) failed");
+  err = esp_camera_init(&camera_config);
+  if (err != ESP_OK) {
+    logger.error("Could not initialize camera: {} '{}'", err, esp_err_to_name(err));
   }
-
-  // bind our master socket to the RTSP port and listen for a client connection
-  if (bind(MasterSocket,(sockaddr*)&ServerAddr,sizeof(ServerAddr)) != 0) {
-    printf("error can't bind port errno=%d\n", errno);
-  }
-  if (listen(MasterSocket,5) != 0) {
-    printf("Couldn't listen!\n");
-  }
-
-  auto camera_task_fn = [&streamer](auto &m, auto& cv) -> bool {
-    static float seconds_per_frame = 0.1f;
-    static auto start = std::chrono::high_resolution_clock::now();
-    static auto last_image_time = start;
-    streamer->handleRequests(0); // don't use a timeout
-    if (streamer->anySessions()) {
-      auto now = std::chrono::high_resolution_clock::now();
-      auto seconds_since_last = std::chrono::duration<float>(now-last_image_time).count();
-      auto millis = std::chrono::duration_cast<std::chrono::milliseconds>(now-start).count();
-      if (seconds_since_last > seconds_per_frame) {
-        last_image_time = now;
-        fmt::print("Streaming image...\n");
-        streamer->streamImage(millis);
-      }
-    }
-    std::unique_lock<std::mutex> lk(m);
-    cv.wait_for(lk, 1ms);
-    return false;
-  };
-
-  auto server_task_fn = [&streamer, &MasterSocket](auto &m, auto& cv) -> bool {
-    fmt::print("Server accepting client...\n");
-    sockaddr_in ClientAddr;                                   // address parameters of a new RTSP client
-    socklen_t ClientAddrLen = sizeof(ClientAddr);
-    auto ClientSocket = accept(MasterSocket,(struct sockaddr*)&ClientAddr,&ClientAddrLen);
-    printf("Client connected. Client address: %s\r\n",inet_ntoa(ClientAddr.sin_addr));
-    // create a task for the client
-    // CRtspSession rtsp(ClientSocket, streamer);
-    streamer->addSession(ClientSocket);
-
-    std::unique_lock<std::mutex> lk(m);
-    cv.wait_for(lk, 30ms);
-    return false;
-  };
-  auto server_task = espp::Task::make_unique(espp::Task::Config{
-      .name = "Server Task",
-      .callback = server_task_fn,
-      .stack_size_bytes = 10*1024,
-      .priority = 10
-    });
-
-  auto camera_task = espp::Task::make_unique(espp::Task::Config{
-      .name = "Camera Task",
-      .callback = camera_task_fn,
-      .stack_size_bytes = 10*1024,
-      .priority = 10
-    });
 
   float breathing_period = 3.5f; // seconds
   espp::Gaussian gaussian({.gamma = 0.1f, .alpha = 1.0f, .beta = 0.5f});
@@ -241,33 +150,6 @@ extern "C" void app_main(void) {
   };
   auto led_task = espp::Task::make_unique({.name = "breathe", .callback = led_callback});
   led_task->start();
-
-  logger.info("Starting camera and transmit tasks");
-  // server_task->start();
-  // camera_task->start();
-
-  {
-    sockaddr_in ClientAddr;                                   // address parameters of a new RTSP client
-    socklen_t ClientAddrLen = sizeof(ClientAddr);
-    SOCKET ClientSocket;                                      // RTSP socket to handle an client
-    while (true) {
-      ClientSocket = accept(MasterSocket,(struct sockaddr*)&ClientAddr,&ClientAddrLen);
-      printf("Client connected. Client address: %s\r\n",inet_ntoa(ClientAddr.sin_addr));
-
-      CRtspSession rtsp(ClientSocket, streamer);     // our threads RTSP session and state
-
-      while (!rtsp.m_stopped) {
-        uint32_t timeout_ms = 100;
-        if(!rtsp.handleRequests(timeout_ms)) {
-          struct timeval now;
-          gettimeofday(&now, NULL); // crufty msecish timer
-          uint32_t msec = now.tv_sec * 1000 + now.tv_usec / 1000;
-          // rtsp.broadcastCurrentFrame(msec);
-          streamer->streamImage(msec);
-        }
-      }
-    }
-  }
 
   // initialize the i2c bus (for RTC)
   logger.info("Initializing I2C");
@@ -303,6 +185,7 @@ extern "C" void app_main(void) {
                                  I2C_TIMEOUT_MS / portTICK_PERIOD_MS);
 
   };
+
   // initialize RTC
   logger.info("Initializing RTC");
   Bm8563 bm8563(Bm8563::Config{
@@ -310,6 +193,7 @@ extern "C" void app_main(void) {
       .read = bm8563_read,
       .log_level = espp::Logger::Verbosity::WARN
     });
+
   // initialize ADC
   logger.info("Initializing Oneshot ADC");
   std::vector<espp::AdcConfig> channels{
@@ -319,6 +203,7 @@ extern "C" void app_main(void) {
       .attenuation = ADC_ATTEN_DB_11
     }
   };
+
   // we use oneshot adc here to that we could add other channels if need be for
   // other components, but it has no in-built filtering. NOTE: for some reason,
   // I cannot use Continuous ADC in combination with esp32-camera...
@@ -337,6 +222,7 @@ extern "C" void app_main(void) {
     }
     return measurement;
   };
+
   // initialize battery
   logger.info("Initializing battery measurement");
   Battery battery(Battery::Config{
@@ -347,93 +233,64 @@ extern "C" void app_main(void) {
       .hold_gpio = -1, // 33,
       .log_level = espp::Logger::Verbosity::WARN
     });
-  // create the camera and transmit tasks, and the cv/m they'll use to
+
+  // create the camera and rtsp server, and the cv/m they'll use to
   // communicate
-  // logger.info("Creating camera task");
-  // std::atomic<int> num_frames_captured{0};
-  // QueueHandle_t transmit_queue = xQueueCreate(2, sizeof(Image));
-  // auto camera_task_fn = [&transmit_queue, &num_frames_captured, &logger](auto& m, auto& cv) {
-  //   // take image
-  //   static camera_fb_t * fb = NULL;
-  //   static size_t _jpg_buf_len;
-  //   static uint8_t * _jpg_buf;
+  int server_port = CONFIG_RTSP_SERVER_PORT;
+  logger.info("Creating RTSP server at {}:{}", server_address, server_port);
+  espp::RtspServer rtsp_server({
+      .server_address = server_address,
+      .port = server_port,
+      .path = "mjpeg/1",
+      .log_level = espp::Logger::Verbosity::WARN
+    });
+  rtsp_server.set_session_log_level(espp::Logger::Verbosity::WARN);
+  rtsp_server.start();
 
-  //   fb = esp_camera_fb_get();
-  //   if (!fb) {
-  //     logger.error("Camera capture failed");
-  //     return;
-  //   }
-  //   uint32_t sig = *((uint32_t *)&fb->buf[fb->len - 4]);
+  logger.info("Creating camera task");
+  auto camera_task_fn = [&rtsp_server, &logger](auto& m, auto& cv) -> bool {
+    // take image
+    static camera_fb_t * fb = NULL;
+    static size_t _jpg_buf_len;
+    static uint8_t * _jpg_buf;
 
-  //   _jpg_buf_len = fb->len;
-  //   _jpg_buf = fb->buf;
+    fb = esp_camera_fb_get();
+    if (!fb) {
+      logger.error("Camera capture failed");
+      return false;
+    }
 
-  //   if (!(_jpg_buf[_jpg_buf_len - 1] != 0xd9 || _jpg_buf[_jpg_buf_len - 2] != 0xd9)) {
-  //     esp_camera_fb_return(fb);
-  //     return;
-  //   }
+    _jpg_buf_len = fb->len;
+    _jpg_buf = fb->buf;
 
-  //   num_frames_captured += 1;
+    if (!(_jpg_buf[_jpg_buf_len - 1] != 0xd9 || _jpg_buf[_jpg_buf_len - 2] != 0xd9)) {
+      esp_camera_fb_return(fb);
+      return false;
+    }
 
-  //   // only copy / allocate if there is space in the queue, otherwise just
-  //   // discard this image.
-  //   auto num_spots = uxQueueSpacesAvailable(transmit_queue);
-  //   if (num_spots > 0) {
-  //     // copy the image data into a buffer and pass that buffer to the sending
-  //     // task notify that image is ready.
-  //     Image image;
-  //     image.num_bytes = _jpg_buf_len + 8;
-  //     image.data = (uint8_t*)heap_caps_malloc(image.num_bytes, MALLOC_CAP_SPIRAM);
-  //     if (image.data != nullptr) {
-  //       // header
-  //       image.data[0] = 0xAA;
-  //       image.data[1] = 0xBB;
-  //       image.data[2] = 0xCC;
-  //       image.data[3] = 0xDD;
-  //       // length
-  //       image.data[4] = (_jpg_buf_len >> 24) & 0xFF;
-  //       image.data[5] = (_jpg_buf_len >> 16) & 0xFF;
-  //       image.data[6] = (_jpg_buf_len >> 8) & 0xFF;
-  //       image.data[7] = (_jpg_buf_len >> 0) & 0xFF;
-  //       // data
-  //       memcpy(&image.data[8], _jpg_buf, _jpg_buf_len);
-  //       if (xQueueSend(transmit_queue, &image, portMAX_DELAY) != pdPASS) {
-  //         // couldn't transmit the image, so we should free the memory here
-  //         free(image.data);
-  //       }
-  //     } else {
-  //       logger.error("Could not allocate for camera image!");
-  //     }
-  //   }
+    espp::JpegFrame image(reinterpret_cast<const char*>(_jpg_buf), _jpg_buf_len);
+    rtsp_server.send_frame(image);
 
-  //   esp_camera_fb_return(fb);
-  // };
-  // // make the tcp_client to transmit to the network
-  // std::atomic<int> num_frames_transmitted{0};
-  // std::atomic<float> transmission_elapsed{0};
-  // auto camera_task = espp::Task::make_unique({
-  //     .name = "Camera Task",
-  //     .callback = camera_task_fn,
-  //     .priority = 10
-  //   });
-  // logger.info("Starting camera and transmit tasks");
-  // camera_task->start();
+    esp_camera_fb_return(fb);
+    return false;
+  };
+
+  auto camera_task = espp::Task::make_unique({
+      .name = "Camera Task",
+      .callback = camera_task_fn,
+      .priority = 10
+    });
+  camera_task->start();
 
   auto start = std::chrono::high_resolution_clock::now();
-  auto led_channel = led_channels[0].channel;
   while (true) {
     std::this_thread::sleep_for(1s);
     // print out some stats (battery, framerate)
     auto end = std::chrono::high_resolution_clock::now();
     float elapsed = std::chrono::duration<float>(end-start).count();
-    // logger.info("[{:.1f}] Battery voltage: {:.2f}", elapsed, battery.get_voltage());
-    // logger.info("[{:.1f}] Framerate (capture): {:.1f} FPS (average)", elapsed, num_frames_captured / elapsed);
-    // // this is an atomic float / shared variable, so let's access it once here
-    // float tx_elapsed = transmission_elapsed;
-    // if (tx_elapsed > 0) {
-    //   logger.info("[{:.1f}] Framerate (transmit): {:.1f} FPS (average)", tx_elapsed, num_frames_transmitted / tx_elapsed);
-    // }
+    fmt::print("\x1B[1A"); // go up a line
+    fmt::print("\x1B[2K\r"); // erase the line
+    logger.info("[{:.1f}] Minimum free memory: {}, Battery voltage: {:.2f}",
+                elapsed, heap_caps_get_minimum_free_size(MALLOC_CAP_DEFAULT), battery.get_voltage());
   }
-
-  closesocket(MasterSocket);
 }
