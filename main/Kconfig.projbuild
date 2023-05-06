@@ -1,5 +1,11 @@
 menu "Camera Streamer Configuration"
 
+    config RTSP_SERVER_PORT
+        int "RTSP Server Port"
+        default 8554
+        help
+            The port number of the RTSP server.
+
     config ESP_WIFI_SSID
         string "WiFi SSID"
         default "myssid"
