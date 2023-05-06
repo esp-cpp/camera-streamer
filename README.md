@@ -2,11 +2,9 @@
 
 Example for [ESP32 TimerCam](https://github.com/m5stack/TimerCam-idf) rebuilt using [ESPP](http://github.com/esp-cpp/espp) to stream video over the network
 
-It creates a task which pushes JPEG frames (1600x1200 px) from the camera into a FreeRTOS queue, along with another task that reads those frames from the queue and sends them via a TCP client socket to a TCP server. An example python TCP server is provided in [./display_frames.py](./display_frames.py).
+It uses RTSP + RTP (over UDP) to perform real-time streaming of the camera data over the network to multiple clients.
 
-https://user-images.githubusercontent.com/213467/201152307-a0a7154a-575e-455d-91cf-437a76822974.mp4
-
-![CleanShot 2022-11-10 at 17 12 10](https://user-images.githubusercontent.com/213467/201225440-3b7064ba-535f-4328-95a4-86c274354107.png)
+https://user-images.githubusercontent.com/213467/236601550-ba1a5ba1-4f1c-4dfa-9b64-94afbd46ef3f.mp4
 
 ## Hardware
 
