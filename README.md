@@ -6,6 +6,9 @@ It uses RTSP + RTP (over UDP) to perform real-time streaming of the camera data 
 
 https://user-images.githubusercontent.com/213467/236601550-ba1a5ba1-4f1c-4dfa-9b64-94afbd46ef3f.mp4
 
+To facilitate easy connection to the camera, it also runs a mDNS server to
+advertise the camera's IP address / port that the RTSP server is running on.
+
 ## Hardware
 
 This sample is designed to run on the ESP32 TimerCam ([Amazon Link](https://www.amazon.com/dp/B09W2RSPGL?psc=1&ref=ppx_yo2ov_dt_b_product_details)).
