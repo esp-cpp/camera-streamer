@@ -5,8 +5,9 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
-#include "esp_heap_caps.h"
 #include "driver/i2c.h"
+#include "esp_heap_caps.h"
+#include "mdns.h"
 #include "nvs_flash.h"
 
 #include "format.hpp"
@@ -213,8 +214,7 @@ extern "C" void app_main(void) {
       .log_level = espp::Logger::Verbosity::WARN
     });
   auto read_battery_voltage = [&adc, &channels]() -> float {
-    auto channel = channels[0].channel;
-    auto maybe_mv = adc.read_mv(channel);
+    auto maybe_mv = adc.read_mv(channels[0]);
     float measurement = 0;
     if (maybe_mv.has_value()) {
       auto mv = maybe_mv.value();
@@ -247,6 +247,36 @@ extern "C" void app_main(void) {
   rtsp_server.set_session_log_level(espp::Logger::Verbosity::WARN);
   rtsp_server.start();
 
+  // initialize mDNS
+  logger.info("Initializing mDNS");
+  err = mdns_init();
+  if (err != ESP_OK) {
+    logger.error("Could not initialize mDNS: {}", err);
+    return;
+  }
+
+  uint8_t mac[6];
+  esp_read_mac(mac, ESP_MAC_WIFI_STA);
+  std::string hostname = fmt::format("camera-streamer-{:x}{:x}{:x}", mac[3], mac[4], mac[5]);
+  err = mdns_hostname_set(hostname.c_str());
+  if (err != ESP_OK) {
+    logger.error("Could not set mDNS hostname: {}", err);
+    return;
+  }
+  logger.info("mDNS hostname set to '{}'", hostname);
+  err = mdns_instance_name_set("Camera Streamer");
+  if (err != ESP_OK) {
+    logger.error("Could not set mDNS instance name: {}", err);
+    return;
+  }
+  err = mdns_service_add("RTSP Server", "_rtsp", "_tcp", server_port, NULL, 0);
+  if (err != ESP_OK) {
+    logger.error("Could not add mDNS service: {}", err);
+    return;
+  }
+  logger.info("mDNS initialized");
+
+  // initialize the camera
   logger.info("Creating camera task");
   auto camera_task_fn = [&rtsp_server, &logger](auto& m, auto& cv) -> bool {
     // take image

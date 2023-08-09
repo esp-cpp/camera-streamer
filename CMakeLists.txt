@@ -7,13 +7,14 @@ include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 # add the component directories that we want to use
 set(EXTRA_COMPONENT_DIRS
   "components/espp/components"
+  "components/esp-protocols/components"
 )
 
 add_compile_definitions(BOARD_HAS_PSRAM)
 
 set(
   COMPONENTS
-  "main esptool_py esp_psram esp_littlefs task format monitor wifi bm8563 battery esp32-camera socket math led rtsp"
+  "main esptool_py esp_psram esp_littlefs task format monitor wifi bm8563 battery esp32-camera socket math led rtsp mdns"
   CACHE STRING
   "List of components to include"
   )
