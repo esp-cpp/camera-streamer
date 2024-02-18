@@ -16,7 +16,7 @@ public:
     espp::Logger::Verbosity log_level{espp::Logger::Verbosity::WARN};
   };
 
-  Battery(const Config &config)
+  explicit Battery(const Config &config)
       : read_(config.read)
       , hold_gpio_(config.hold_gpio)
       , logger_({.tag = "Battery", .level = config.log_level}) {
@@ -54,9 +54,8 @@ protected:
       return;
     }
     logger_.info("Initializing hold GPIO {}", hold_gpio_);
-    uint64_t pin_mask = (1 << hold_gpio_);
     gpio_config_t io_config = {
-        .pin_bit_mask = pin_mask,
+        .pin_bit_mask = ((uint64_t)1 << hold_gpio_),
         .mode = GPIO_MODE_OUTPUT,
         .pull_up_en = GPIO_PULLUP_DISABLE,
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
