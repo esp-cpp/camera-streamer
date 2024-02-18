@@ -166,30 +166,30 @@ extern "C" void app_main(void) {
   logger.info("Initializing RTC");
   espp::Bm8563 bm8563({
       .write = std::bind(&espp::I2c::write, &i2c, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3),
-      .read = std::bind(&espp::I2c::read_at_register, &i2c, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4),
+      .write_then_read = std::bind(&espp::I2c::write_read, &i2c, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4, std::placeholders::_5),
       .log_level = espp::Logger::Verbosity::WARN
     });
 
   // initialize ADC
   logger.info("Initializing Oneshot ADC");
-  std::vector<espp::AdcConfig> channels{
-    {
-      .unit = ADC_UNIT_1,
-      .channel = ADC_CHANNEL_2, // this is the ADC for GPIO 38
-      .attenuation = ADC_ATTEN_DB_11
-    }
+  espp::AdcConfig battery_channel = {
+    .unit = ADC_UNIT_1,
+    // this is the ADC for GPIO 38
+    .channel = ADC_CHANNEL_2,
+    .attenuation = ADC_ATTEN_DB_12
   };
+  std::vector<espp::AdcConfig> channels{battery_channel};
 
   // we use oneshot adc here to that we could add other channels if need be for
   // other components, but it has no in-built filtering. NOTE: for some reason,
   // I cannot use Continuous ADC in combination with esp32-camera...
   espp::OneshotAdc adc({
       .unit = ADC_UNIT_1,
-      .channels = channels,
+      .channels = std::move(channels),
       .log_level = espp::Logger::Verbosity::WARN
     });
-  auto read_battery_voltage = [&adc, &channels]() -> float {
-    auto maybe_mv = adc.read_mv(channels[0]);
+  auto read_battery_voltage = [&adc, &battery_channel]() -> float {
+    auto maybe_mv = adc.read_mv(battery_channel);
     float measurement = 0;
     if (maybe_mv.has_value()) {
       auto mv = maybe_mv.value();
