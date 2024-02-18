@@ -178,14 +178,13 @@ extern "C" void app_main(void) {
     .channel = ADC_CHANNEL_2,
     .attenuation = ADC_ATTEN_DB_12
   };
-  std::vector<espp::AdcConfig> channels{battery_channel};
 
   // we use oneshot adc here to that we could add other channels if need be for
   // other components, but it has no in-built filtering. NOTE: for some reason,
   // I cannot use Continuous ADC in combination with esp32-camera...
   espp::OneshotAdc adc({
-      .unit = ADC_UNIT_1,
-      .channels = std::move(channels),
+      .unit = battery_channel.unit,
+      .channels = {battery_channel},
       .log_level = espp::Logger::Verbosity::WARN
     });
   auto read_battery_voltage = [&adc, &battery_channel]() -> float {
