@@ -19,9 +19,9 @@
 #include "udp_socket.hpp"
 #include "wifi_sta.hpp"
 
-#include "esp_camera.h"
 #include "battery.hpp"
 #include "bm8563.hpp"
+#include "esp_camera.h"
 
 #include "rtsp_server.hpp"
 
@@ -42,34 +42,31 @@ extern "C" void app_main(void) {
 
   // initialize LED
   logger.info("Initializing LED");
-  std::vector<espp::Led::ChannelConfig> led_channels{
-    {
+  std::vector<espp::Led::ChannelConfig> led_channels{{
       .gpio = 2,
       .channel = LEDC_CHANNEL_5,
       .timer = LEDC_TIMER_2,
-    }
-  };
+  }};
   espp::Led led(espp::Led::Config{
       .timer = LEDC_TIMER_2,
       .frequency_hz = 5000,
       .channels = led_channels,
       .duty_resolution = LEDC_TIMER_10_BIT,
-    });
+  });
 
   // initialize WiFi
   logger.info("Initializing WiFi");
   std::string server_address;
-  espp::WifiSta wifi_sta({
-      .ssid = CONFIG_ESP_WIFI_SSID,
-        .password = CONFIG_ESP_WIFI_PASSWORD,
-        .num_connect_retries = CONFIG_ESP_MAXIMUM_RETRY,
-        .on_connected = nullptr,
-        .on_disconnected = nullptr,
-        .on_got_ip = [&logger, &server_address](ip_event_got_ip_t* eventdata) {
-          server_address = fmt::format("{}.{}.{}.{}", IP2STR(&eventdata->ip_info.ip));
-          logger.info("got IP: {}", server_address);
-        }
-        });
+  espp::WifiSta wifi_sta({.ssid = CONFIG_ESP_WIFI_SSID,
+                          .password = CONFIG_ESP_WIFI_PASSWORD,
+                          .num_connect_retries = CONFIG_ESP_MAXIMUM_RETRY,
+                          .on_connected = nullptr,
+                          .on_disconnected = nullptr,
+                          .on_got_ip = [&logger, &server_address](ip_event_got_ip_t *eventdata) {
+                            server_address =
+                                fmt::format("{}.{}.{}.{}", IP2STR(&eventdata->ip_info.ip));
+                            logger.info("got IP: {}", server_address);
+                          }});
   // wait for network
   float duty = 0.0f;
   while (!wifi_sta.is_connected()) {
@@ -100,34 +97,39 @@ extern "C" void app_main(void) {
 
   logger.info("Initializing camera");
   static camera_config_t camera_config = {
-    .pin_pwdn  = -1,
-    .pin_reset = 15,
-    .pin_xclk = 27,
-    .pin_sccb_sda = 25,
-    .pin_sccb_scl = 23,
+      .pin_pwdn = -1,
+      .pin_reset = 15,
+      .pin_xclk = 27,
+      .pin_sccb_sda = 25,
+      .pin_sccb_scl = 23,
 
-    .pin_d7 = 19,
-    .pin_d6 = 36,
-    .pin_d5 = 18,
-    .pin_d4 = 39,
-    .pin_d3 = 5,
-    .pin_d2 = 34,
-    .pin_d1 = 35,
-    .pin_d0 = 32,
-    .pin_vsync = 22,
-    .pin_href = 26,
-    .pin_pclk = 21,
+      .pin_d7 = 19,
+      .pin_d6 = 36,
+      .pin_d5 = 18,
+      .pin_d4 = 39,
+      .pin_d3 = 5,
+      .pin_d2 = 34,
+      .pin_d1 = 35,
+      .pin_d0 = 32,
+      .pin_vsync = 22,
+      .pin_href = 26,
+      .pin_pclk = 21,
 
-    .xclk_freq_hz = 10000000,//EXPERIMENTAL: Set to 16MHz on ESP32-S2 or ESP32-S3 to enable EDMA mode
-    .ledc_timer = LEDC_TIMER_0,
-    .ledc_channel = LEDC_CHANNEL_0,
+      .xclk_freq_hz =
+          10000000, // EXPERIMENTAL: Set to 16MHz on ESP32-S2 or ESP32-S3 to enable EDMA mode
+      .ledc_timer = LEDC_TIMER_0,
+      .ledc_channel = LEDC_CHANNEL_0,
 
-    .pixel_format = PIXFORMAT_JPEG,//YUV422,GRAYSCALE,RGB565,JPEG
-    .frame_size = FRAMESIZE_QVGA,// QVGA-UXGA, For ESP32, do not use sizes above QVGA when not JPEG. The performance of the ESP32-S series has improved a lot, but JPEG mode always gives better frame rates.
+      .pixel_format = PIXFORMAT_JPEG, // YUV422,GRAYSCALE,RGB565,JPEG
+      .frame_size = FRAMESIZE_QVGA,   // QVGA-UXGA, For ESP32, do not use sizes above QVGA when not
+                                      // JPEG. The performance of the ESP32-S series has improved a
+                                      // lot, but JPEG mode always gives better frame rates.
 
-    .jpeg_quality = 15, //0-63, for OV series camera sensors, lower number means higher quality
-    .fb_count = 2, //When jpeg mode is used, if fb_count more than one, the driver will work in continuous mode.
-    .grab_mode = CAMERA_GRAB_LATEST // CAMERA_GRAB_WHEN_EMPTY // . Sets when buffers should be filled
+      .jpeg_quality = 15, // 0-63, for OV series camera sensors, lower number means higher quality
+      .fb_count = 2, // When jpeg mode is used, if fb_count more than one, the driver will work in
+                     // continuous mode.
+      .grab_mode =
+          CAMERA_GRAB_LATEST // CAMERA_GRAB_WHEN_EMPTY // . Sets when buffers should be filled
   };
   err = esp_camera_init(&camera_config);
   if (err != ESP_OK) {
@@ -154,39 +156,37 @@ extern "C" void app_main(void) {
 
   // initialize the i2c bus (for RTC)
   logger.info("Initializing I2C");
-    espp::I2c i2c({
-        .port = I2C_NUM_0,
-        .sda_io_num = GPIO_NUM_12,
-        .scl_io_num = GPIO_NUM_14,
-        .sda_pullup_en = GPIO_PULLUP_ENABLE,
-        .scl_pullup_en = GPIO_PULLUP_ENABLE,
-    });
+  espp::I2c i2c({
+      .port = I2C_NUM_0,
+      .sda_io_num = GPIO_NUM_12,
+      .scl_io_num = GPIO_NUM_14,
+      .sda_pullup_en = GPIO_PULLUP_ENABLE,
+      .scl_pullup_en = GPIO_PULLUP_ENABLE,
+  });
 
   // initialize RTC
   logger.info("Initializing RTC");
-  espp::Bm8563 bm8563({
-      .write = std::bind(&espp::I2c::write, &i2c, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3),
-      .write_then_read = std::bind(&espp::I2c::write_read, &i2c, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4, std::placeholders::_5),
-      .log_level = espp::Logger::Verbosity::WARN
-    });
+  espp::Bm8563 bm8563(
+      {.write = std::bind(&espp::I2c::write, &i2c, std::placeholders::_1, std::placeholders::_2,
+                          std::placeholders::_3),
+       .write_then_read =
+           std::bind(&espp::I2c::write_read, &i2c, std::placeholders::_1, std::placeholders::_2,
+                     std::placeholders::_3, std::placeholders::_4, std::placeholders::_5),
+       .log_level = espp::Logger::Verbosity::WARN});
 
   // initialize ADC
   logger.info("Initializing Oneshot ADC");
-  espp::AdcConfig battery_channel = {
-    .unit = ADC_UNIT_1,
-    // this is the ADC for GPIO 38
-    .channel = ADC_CHANNEL_2,
-    .attenuation = ADC_ATTEN_DB_12
-  };
+  espp::AdcConfig battery_channel = {.unit = ADC_UNIT_1,
+                                     // this is the ADC for GPIO 38
+                                     .channel = ADC_CHANNEL_2,
+                                     .attenuation = ADC_ATTEN_DB_12};
 
   // we use oneshot adc here to that we could add other channels if need be for
   // other components, but it has no in-built filtering. NOTE: for some reason,
   // I cannot use Continuous ADC in combination with esp32-camera...
-  espp::OneshotAdc adc({
-      .unit = battery_channel.unit,
-      .channels = {battery_channel},
-      .log_level = espp::Logger::Verbosity::WARN
-    });
+  espp::OneshotAdc adc({.unit = battery_channel.unit,
+                        .channels = {battery_channel},
+                        .log_level = espp::Logger::Verbosity::WARN});
   auto read_battery_voltage = [&adc, &battery_channel]() -> float {
     auto maybe_mv = adc.read_mv(battery_channel);
     float measurement = 0;
@@ -199,25 +199,21 @@ extern "C" void app_main(void) {
 
   // initialize battery
   logger.info("Initializing battery measurement");
-  Battery battery(Battery::Config{
-      .read = read_battery_voltage,
-      // NOTE: cannot initialize battery hold pin right now, if I do then the
-      // board ... stops running; therefore I've configured the battery to not
-      // use the hold gpio
-      .hold_gpio = -1, // 33,
-      .log_level = espp::Logger::Verbosity::WARN
-    });
+  Battery battery(Battery::Config{.read = read_battery_voltage,
+                                  // NOTE: cannot initialize battery hold pin right now, if I do
+                                  // then the board ... stops running; therefore I've configured the
+                                  // battery to not use the hold gpio
+                                  .hold_gpio = -1, // 33,
+                                  .log_level = espp::Logger::Verbosity::WARN});
 
   // create the camera and rtsp server, and the cv/m they'll use to
   // communicate
   int server_port = CONFIG_RTSP_SERVER_PORT;
   logger.info("Creating RTSP server at {}:{}", server_address, server_port);
-  espp::RtspServer rtsp_server({
-      .server_address = server_address,
-      .port = server_port,
-      .path = "mjpeg/1",
-      .log_level = espp::Logger::Verbosity::WARN
-    });
+  espp::RtspServer rtsp_server({.server_address = server_address,
+                                .port = server_port,
+                                .path = "mjpeg/1",
+                                .log_level = espp::Logger::Verbosity::WARN});
   rtsp_server.set_session_log_level(espp::Logger::Verbosity::WARN);
   rtsp_server.start();
 
@@ -252,11 +248,11 @@ extern "C" void app_main(void) {
 
   // initialize the camera
   logger.info("Creating camera task");
-  auto camera_task_fn = [&rtsp_server, &logger](auto& m, auto& cv) -> bool {
+  auto camera_task_fn = [&rtsp_server, &logger](auto &m, auto &cv) -> bool {
     // take image
-    static camera_fb_t * fb = NULL;
+    static camera_fb_t *fb = NULL;
     static size_t _jpg_buf_len;
-    static uint8_t * _jpg_buf;
+    static uint8_t *_jpg_buf;
 
     fb = esp_camera_fb_get();
     if (!fb) {
@@ -272,18 +268,15 @@ extern "C" void app_main(void) {
       return false;
     }
 
-    espp::JpegFrame image(reinterpret_cast<const char*>(_jpg_buf), _jpg_buf_len);
+    espp::JpegFrame image(reinterpret_cast<const char *>(_jpg_buf), _jpg_buf_len);
     rtsp_server.send_frame(image);
 
     esp_camera_fb_return(fb);
     return false;
   };
 
-  auto camera_task = espp::Task::make_unique({
-      .name = "Camera Task",
-      .callback = camera_task_fn,
-      .priority = 10
-    });
+  auto camera_task =
+      espp::Task::make_unique({.name = "Camera Task", .callback = camera_task_fn, .priority = 10});
   camera_task->start();
 
   auto start = std::chrono::high_resolution_clock::now();
@@ -291,10 +284,10 @@ extern "C" void app_main(void) {
     std::this_thread::sleep_for(1s);
     // print out some stats (battery, framerate)
     auto end = std::chrono::high_resolution_clock::now();
-    float elapsed = std::chrono::duration<float>(end-start).count();
-    fmt::print("\x1B[1A"); // go up a line
+    float elapsed = std::chrono::duration<float>(end - start).count();
+    fmt::print("\x1B[1A");   // go up a line
     fmt::print("\x1B[2K\r"); // erase the line
-    logger.info("[{:.1f}] Minimum free memory: {}, Battery voltage: {:.2f}",
-                elapsed, heap_caps_get_minimum_free_size(MALLOC_CAP_DEFAULT), battery.get_voltage());
+    logger.info("[{:.1f}] Minimum free memory: {}, Battery voltage: {:.2f}", elapsed,
+                heap_caps_get_minimum_free_size(MALLOC_CAP_DEFAULT), battery.get_voltage());
   }
 }
