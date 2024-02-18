@@ -16,10 +16,10 @@ public:
     espp::Logger::Verbosity log_level{espp::Logger::Verbosity::WARN};
   };
 
-  Battery(const Config& config)
-    : read_(config.read),
-      hold_gpio_(config.hold_gpio),
-      logger_({.tag = "Battery", .level = config.log_level}) {
+  Battery(const Config &config)
+      : read_(config.read)
+      , hold_gpio_(config.hold_gpio)
+      , logger_({.tag = "Battery", .level = config.log_level}) {
     init();
   }
 
@@ -56,11 +56,11 @@ protected:
     logger_.info("Initializing hold GPIO {}", hold_gpio_);
     uint64_t pin_mask = (1 << hold_gpio_);
     gpio_config_t io_config = {
-      .pin_bit_mask = pin_mask,
-      .mode = GPIO_MODE_OUTPUT,
-      .pull_up_en = GPIO_PULLUP_DISABLE,
-      .pull_down_en = GPIO_PULLDOWN_DISABLE,
-      .intr_type = GPIO_INTR_DISABLE,
+        .pin_bit_mask = pin_mask,
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
     };
     ESP_ERROR_CHECK(gpio_config(&io_config));
     hold_output();

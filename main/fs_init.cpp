@@ -3,10 +3,10 @@
 #include "format.hpp"
 
 static esp_vfs_littlefs_conf_t conf = {
-  .base_path = "/littlefs",
-  .partition_label = "littlefs",
-  .format_if_mount_failed = true,
-  .dont_mount = false,
+    .base_path = "/littlefs",
+    .partition_label = "littlefs",
+    .format_if_mount_failed = true,
+    .dont_mount = false,
 };
 
 void fs_init() {
@@ -28,8 +28,7 @@ void fs_init() {
   size_t total = 0, used = 0;
   ret = esp_littlefs_info(conf.partition_label, &total, &used);
   if (ret != ESP_OK) {
-    fmt::print("Failed to get LittleFS partition information ({})\n",
-               esp_err_to_name(ret));
+    fmt::print("Failed to get LittleFS partition information ({})\n", esp_err_to_name(ret));
   } else {
     fmt::print("Partition size: total: {}, used: {}\n", total, used);
   }
