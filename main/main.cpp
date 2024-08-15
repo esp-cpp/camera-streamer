@@ -279,15 +279,12 @@ extern "C" void app_main(void) {
       espp::Task::make_unique({.name = "Camera Task", .callback = camera_task_fn, .priority = 10});
   camera_task->start();
 
-  auto start = std::chrono::high_resolution_clock::now();
   while (true) {
     std::this_thread::sleep_for(1s);
     // print out some stats (battery, framerate)
-    auto end = std::chrono::high_resolution_clock::now();
-    float elapsed = std::chrono::duration<float>(end - start).count();
     fmt::print("\x1B[1A");   // go up a line
     fmt::print("\x1B[2K\r"); // erase the line
-    logger.info("[{:.1f}] Minimum free memory: {}, Battery voltage: {:.2f}", elapsed,
+    logger.info("Minimum free memory: {}, Battery voltage: {:.2f}",
                 heap_caps_get_minimum_free_size(MALLOC_CAP_DEFAULT), battery.get_voltage());
   }
 }
