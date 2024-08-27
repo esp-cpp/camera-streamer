@@ -7,20 +7,14 @@
 
 #include <esp_heap_caps.h>
 #include <mdns.h>
-#include <nvs_flash.h>
 
-#include "format.hpp"
-#include "gaussian.hpp"
-#include "i2c.hpp"
-#include "led.hpp"
-#include "oneshot_adc.hpp"
+#include "esp32-timer-cam.hpp"
+#include "nvs.hpp"
 #include "task.hpp"
 #include "tcp_socket.hpp"
 #include "udp_socket.hpp"
 #include "wifi_sta.hpp"
 
-#include "battery.hpp"
-#include "bm8563.hpp"
 #include "esp_camera.h"
 
 #include "rtsp_server.hpp"
@@ -31,28 +25,22 @@ extern "C" void app_main(void) {
   esp_err_t err;
   espp::Logger logger({.tag = "Camera Streamer", .level = espp::Logger::Verbosity::INFO});
   logger.info("Bootup");
+
+#if CONFIG_ESP32_WIFI_NVS_ENABLED
+  std::error_code ec;
   // initialize NVS, needed for WiFi
-  esp_err_t ret = nvs_flash_init();
-  if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-    logger.warn("Erasing NVS flash...");
-    ESP_ERROR_CHECK(nvs_flash_erase());
-    ret = nvs_flash_init();
-  }
-  ESP_ERROR_CHECK(ret);
+  espp::Nvs nvs;
+  nvs.init(ec);
+#endif
+
+  auto &timer_cam = espp::EspTimerCam::get();
 
   // initialize LED
-  logger.info("Initializing LED");
-  std::vector<espp::Led::ChannelConfig> led_channels{{
-      .gpio = 2,
-      .channel = LEDC_CHANNEL_5,
-      .timer = LEDC_TIMER_2,
-  }};
-  espp::Led led(espp::Led::Config{
-      .timer = LEDC_TIMER_2,
-      .frequency_hz = 5000,
-      .channels = led_channels,
-      .duty_resolution = LEDC_TIMER_10_BIT,
-  });
+  static constexpr float led_breathing_period = 3.5f;
+  if (!timer_cam.initialize_led(led_breathing_period)) {
+    logger.error("Could not initialize LED");
+    return;
+  }
 
   // initialize WiFi
   logger.info("Initializing WiFi");
@@ -71,8 +59,10 @@ extern "C" void app_main(void) {
   float duty = 0.0f;
   while (!wifi_sta.is_connected()) {
     logger.info("waiting for wifi connection...");
-    led.set_duty(led_channels[0].channel, duty);
-    duty = duty == 0.0f ? 50.0f : 0.0f;
+    logger.move_up();
+    logger.clear_line();
+    timer_cam.set_led_brightness(duty);
+    duty = duty == 0.0f ? 0.5f : 0.0f;
     std::this_thread::sleep_for(1s);
   }
 
@@ -98,25 +88,25 @@ extern "C" void app_main(void) {
   logger.info("Initializing camera");
   static camera_config_t camera_config = {
       .pin_pwdn = -1,
-      .pin_reset = 15,
-      .pin_xclk = 27,
-      .pin_sccb_sda = 25,
-      .pin_sccb_scl = 23,
+      .pin_reset = timer_cam.get_camera_reset_pin(),
+      .pin_xclk = timer_cam.get_camera_xclk_pin(),
+      .pin_sccb_sda = timer_cam.get_camera_sda_pin(),
+      .pin_sccb_scl = timer_cam.get_camera_scl_pin(),
 
-      .pin_d7 = 19,
-      .pin_d6 = 36,
-      .pin_d5 = 18,
-      .pin_d4 = 39,
-      .pin_d3 = 5,
-      .pin_d2 = 34,
-      .pin_d1 = 35,
-      .pin_d0 = 32,
-      .pin_vsync = 22,
-      .pin_href = 26,
-      .pin_pclk = 21,
+      .pin_d7 = timer_cam.get_camera_d7_pin(),
+      .pin_d6 = timer_cam.get_camera_d6_pin(),
+      .pin_d5 = timer_cam.get_camera_d5_pin(),
+      .pin_d4 = timer_cam.get_camera_d4_pin(),
+      .pin_d3 = timer_cam.get_camera_d3_pin(),
+      .pin_d2 = timer_cam.get_camera_d2_pin(),
+      .pin_d1 = timer_cam.get_camera_d1_pin(),
+      .pin_d0 = timer_cam.get_camera_d0_pin(),
+      .pin_vsync = timer_cam.get_camera_vsync_pin(),
+      .pin_href = timer_cam.get_camera_href_pin(),
+      .pin_pclk = timer_cam.get_camera_pclk_pin(),
 
-      .xclk_freq_hz =
-          10000000, // EXPERIMENTAL: Set to 16MHz on ESP32-S2 or ESP32-S3 to enable EDMA mode
+      // EXPERIMENTAL: Set to 16MHz on ESP32-S2 or ESP32-S3 to enable EDMA mode
+      .xclk_freq_hz = timer_cam.get_camera_xclk_freq_hz(),
       .ledc_timer = LEDC_TIMER_0,
       .ledc_channel = LEDC_CHANNEL_0,
 
@@ -136,75 +126,13 @@ extern "C" void app_main(void) {
     logger.error("Could not initialize camera: {} '{}'", err, esp_err_to_name(err));
   }
 
-  float breathing_period = 3.5f; // seconds
-  espp::Gaussian gaussian({.gamma = 0.1f, .alpha = 1.0f, .beta = 0.5f});
-  auto breathe = [&gaussian, &breathing_period]() -> float {
-    static auto breathing_start = std::chrono::high_resolution_clock::now();
-    auto now = std::chrono::high_resolution_clock::now();
-    auto elapsed = std::chrono::duration<float>(now - breathing_start).count();
-    float t = std::fmod(elapsed, breathing_period) / breathing_period;
-    return gaussian(t);
-  };
-  auto led_callback = [&breathe, &led, &led_channels](auto &m, auto &cv) -> bool {
-    led.set_duty(led_channels[0].channel, 100.0f * breathe());
-    std::unique_lock<std::mutex> lk(m);
-    cv.wait_for(lk, 10ms);
-    return false;
-  };
-  auto led_task = espp::Task::make_unique({.name = "breathe", .callback = led_callback});
-  led_task->start();
-
-  // initialize the i2c bus (for RTC)
-  logger.info("Initializing I2C");
-  espp::I2c i2c({
-      .port = I2C_NUM_0,
-      .sda_io_num = GPIO_NUM_12,
-      .scl_io_num = GPIO_NUM_14,
-      .sda_pullup_en = GPIO_PULLUP_ENABLE,
-      .scl_pullup_en = GPIO_PULLUP_ENABLE,
-  });
+  timer_cam.start_led_breathing();
 
   // initialize RTC
-  logger.info("Initializing RTC");
-  espp::Bm8563 bm8563(
-      {.write = std::bind(&espp::I2c::write, &i2c, std::placeholders::_1, std::placeholders::_2,
-                          std::placeholders::_3),
-       .write_then_read =
-           std::bind(&espp::I2c::write_read, &i2c, std::placeholders::_1, std::placeholders::_2,
-                     std::placeholders::_3, std::placeholders::_4, std::placeholders::_5),
-       .log_level = espp::Logger::Verbosity::WARN});
-
-  // initialize ADC
-  logger.info("Initializing Oneshot ADC");
-  espp::AdcConfig battery_channel = {.unit = ADC_UNIT_1,
-                                     // this is the ADC for GPIO 38
-                                     .channel = ADC_CHANNEL_2,
-                                     .attenuation = ADC_ATTEN_DB_12};
-
-  // we use oneshot adc here to that we could add other channels if need be for
-  // other components, but it has no in-built filtering. NOTE: for some reason,
-  // I cannot use Continuous ADC in combination with esp32-camera...
-  espp::OneshotAdc adc({.unit = battery_channel.unit,
-                        .channels = {battery_channel},
-                        .log_level = espp::Logger::Verbosity::WARN});
-  auto read_battery_voltage = [&adc, &battery_channel]() -> float {
-    auto maybe_mv = adc.read_mv(battery_channel);
-    float measurement = 0;
-    if (maybe_mv.has_value()) {
-      auto mv = maybe_mv.value();
-      measurement = mv;
-    }
-    return measurement;
-  };
-
-  // initialize battery
-  logger.info("Initializing battery measurement");
-  Battery battery(Battery::Config{.read = read_battery_voltage,
-                                  // NOTE: cannot initialize battery hold pin right now, if I do
-                                  // then the board ... stops running; therefore I've configured the
-                                  // battery to not use the hold gpio
-                                  .hold_gpio = -1, // 33,
-                                  .log_level = espp::Logger::Verbosity::WARN});
+  if (!timer_cam.initialize_rtc()) {
+    logger.error("Could not initialize RTC");
+    return;
+  }
 
   // create the camera and rtsp server, and the cv/m they'll use to
   // communicate
@@ -280,11 +208,12 @@ extern "C" void app_main(void) {
   camera_task->start();
 
   while (true) {
-    std::this_thread::sleep_for(1s);
+    std::this_thread::sleep_for(100ms);
     // print out some stats (battery, framerate)
-    fmt::print("\x1B[1A");   // go up a line
-    fmt::print("\x1B[2K\r"); // erase the line
     logger.info("Minimum free memory: {}, Battery voltage: {:.2f}",
-                heap_caps_get_minimum_free_size(MALLOC_CAP_DEFAULT), battery.get_voltage());
+                heap_caps_get_minimum_free_size(MALLOC_CAP_DEFAULT),
+                timer_cam.get_battery_voltage());
+    logger.move_up();
+    logger.clear_line();
   }
 }
