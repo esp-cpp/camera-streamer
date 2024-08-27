@@ -22,9 +22,8 @@ jobs:
       uses: espressif/esp-idf-ci-action@v1
       with:
         esp_idf_version: release-v5.2
-        target: esp32s3
+        target: esp32
         path: '.'
-        command: 'idf.py build'
 
     - name: Upload Build Outputs
       uses: actions/upload-artifact@v3
