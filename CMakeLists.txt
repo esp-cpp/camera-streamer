@@ -7,7 +7,7 @@ include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 # add the component directories that we want to use
 set(EXTRA_COMPONENT_DIRS
   "components/espp/components"
-  "components/esp-protocols/components"
+  "components/esp-protocols/components/mdns"
 )
 
 add_compile_definitions(BOARD_HAS_PSRAM)

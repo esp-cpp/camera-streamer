@@ -203,8 +203,8 @@ extern "C" void app_main(void) {
     return false;
   };
 
-  auto camera_task =
-      espp::Task::make_unique({.name = "Camera Task", .callback = camera_task_fn, .priority = 10});
+  auto camera_task = espp::Task::make_unique(
+      {.callback = camera_task_fn, .task_config = {.name = "Camera Task", .priority = 10}});
   camera_task->start();
 
   while (true) {
