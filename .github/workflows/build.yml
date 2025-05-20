@@ -14,6 +14,6 @@ jobs:
     - name: Build Main
       uses: espressif/esp-idf-ci-action@v1
       with:
-        esp_idf_version: release-v5.3
+        esp_idf_version: release-v5.4
         target: esp32
         path: '.'

@@ -4,7 +4,10 @@ dependencies:
   idf:
     version: '>=5.0'
   espressif/mdns: '>=1.8'
-  espressif/esp32-camera: '>=2.0'
+  # NOTE: we cannot use the idf component because for anything ESP-IDF >= 5.4 it
+  # automatically uses the new I2C driver, which espp doesn't support yet.
+  #
+  # espressif/esp32-camera: '>=2.0'
   espp/rtsp: '>=1.0'
   espp/wifi: '>=1.0'
   espp/monitor: '>=1.0'
