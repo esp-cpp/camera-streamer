@@ -35,3 +35,4 @@ sdkconfig
 sdkconfig.old
 .DS_Store
 dependencies.lock
+managed_components/
