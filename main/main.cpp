@@ -176,7 +176,7 @@ extern "C" void app_main(void) {
 
   // initialize the camera
   logger.info("Creating camera task");
-  auto camera_task_fn = [&rtsp_server, &logger](auto &m, auto &cv) -> bool {
+  auto camera_task_fn = [&rtsp_server, &logger](const auto &m, const auto &cv) -> bool {
     // take image
     static camera_fb_t *fb = NULL;
     static size_t _jpg_buf_len;
