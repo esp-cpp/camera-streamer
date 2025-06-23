@@ -33,3 +33,6 @@ CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ=240
 
 # ESP32-Camera specific
 CONFIG_SCCB_HARDWARE_I2C_DRIVER_LEGACY=y
+
+# the cli library requires exceptions right now...
+CONFIG_COMPILER_CXX_EXCEPTIONS=y
