@@ -9,6 +9,93 @@ https://user-images.githubusercontent.com/213467/236601550-ba1a5ba1-4f1c-4dfa-9b
 To facilitate easy connection to the camera, it also runs a mDNS server to
 advertise the camera's IP address / port that the RTSP server is running on.
 
+<!-- markdown-toc start - Don't edit this section. Run M-x markdown-toc-refresh-toc -->
+**Table of Contents**
+
+- [camera-streamer](#camera-streamer)
+  - [Use](#use)
+    - [Program](#program)
+    - [Configure](#configure)
+  - [Hardware](#hardware)
+    - [Full pin-out:](#full-pin-out)
+      - [Camera Interface (OV3660):](#camera-interface-ov3660)
+      - [RTC (BM8563):](#rtc-bm8563)
+      - [Battery:](#battery)
+      - [Input / Output:](#input--output)
+  - [Additional References](#additional-references)
+
+<!-- markdown-toc end -->
+
+## Use
+
+You must first program your hardware. Afterwards, you can configure it via a USB
+connection using its built-in CLI.
+
+### Program
+
+The ESP32-TimerCam will require one-time programming to function.
+
+Download the release `programmer` executable from the latest [releases
+page](https://github.com/esp-cpp/camera-streamer/releases) for `windows`,
+`macos`, or `linux` - depending on which computer you want to use to perform the
+one-time programming.
+
+1. Download the programmer
+2. Unzip it
+3. Double click the `exe` (if windows), or open a terminal and execute it from
+   the command line `./camera-streamer_programmer_v2.0.0_macos.bin`.
+
+### Configure
+
+To configure it, simply connect it to your computer via USB and open the serial
+port in a terminal (e.g. `screen`, `PuTTY`, etc.) at 115200 baud. Once there,
+you can use it as you would any other CLI - and the `help` command will provide
+info about the commands available.
+
+Any SSID/Password you set will be securely saved in the ESP32-TimerCam's NVS,
+which is managed by the ESP-IDF WiFi subsystem.
+
+![CleanShot 2025-06-22 at 22 38 41](https://github.com/user-attachments/assets/4b698b21-c66e-469e-9c49-a12d9f0ae65b)
+
+```console
+sta> help
+Commands available:
+ - help
+	This help message
+ - exit
+	Quit the session
+ - log <verbosity>
+	Set the log verbosity for the wifi sta.
+ - connect
+	Connect to a WiFi network with the given SSID and password.
+ - connect <ssid> <password>
+	Connect to a WiFi network with the given SSID and password.
+ - disconnect
+	Disconnect from the current WiFi network.
+ - ssid
+	Get the current SSID (Service Set Identifier) of the WiFi connection.
+ - rssi
+	Get the current RSSI (Received Signal Strength Indicator) of the WiFi connection.
+ - ip
+	Get the current IP address of the WiFi connection.
+ - connected
+	Check if the WiFi is connected.
+ - mac
+	Get the current MAC address of the WiFi connection.
+ - bssid
+	Get the current BSSID (MAC addressof the access point) of the WiFi connection.
+ - channel
+	Get the current WiFi channel of the connection.
+ - config
+	Get the current WiFi configuration.
+ - scan <int>
+	Scan for available WiFi networks.
+ - memory
+	Display minimum free memory.
+ - battery
+	Display the current battery voltage.
+```
+
 ## Hardware
 
 This sample is designed to run on the ESP32 TimerCam ([Amazon Link](https://www.amazon.com/dp/B09W2RSPGL?psc=1&ref=ppx_yo2ov_dt_b_product_details)).
