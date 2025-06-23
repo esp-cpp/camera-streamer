@@ -8,12 +8,14 @@
 #include <esp_heap_caps.h>
 #include <mdns.h>
 
+#include "cli.hpp"
 #include "esp32-timer-cam.hpp"
 #include "nvs.hpp"
 #include "task.hpp"
 #include "tcp_socket.hpp"
 #include "udp_socket.hpp"
 #include "wifi_sta.hpp"
+#include "wifi_sta_menu.hpp"
 
 #include "esp_camera.h"
 
@@ -21,9 +23,17 @@
 
 using namespace std::chrono_literals;
 
+static espp::Logger logger({.tag = "Camera Streamer", .level = espp::Logger::Verbosity::INFO});
+
+std::unique_ptr<espp::Task> camera_task;
+std::shared_ptr<espp::RtspServer> rtsp_server;
+
+esp_err_t initialize_camera(void);
+void start_rtsp_server(std::string_view server_address, int server_port);
+bool camera_task_fn(const std::mutex &m, const std::condition_variable &cv);
+
 extern "C" void app_main(void) {
   esp_err_t err;
-  espp::Logger logger({.tag = "Camera Streamer", .level = espp::Logger::Verbosity::INFO});
   logger.info("Bootup");
 
 #if CONFIG_ESP32_WIFI_NVS_ENABLED
@@ -35,38 +45,90 @@ extern "C" void app_main(void) {
 
   auto &timer_cam = espp::EspTimerCam::get();
 
+  // initialize RTC
+  if (!timer_cam.initialize_rtc()) {
+    logger.error("Could not initialize RTC");
+    return;
+  }
+
   // initialize LED
-  static constexpr float led_breathing_period = 3.5f;
-  if (!timer_cam.initialize_led(led_breathing_period)) {
+  static constexpr float disconnected_led_breathing_period = 1.0f;
+  static constexpr float connected_led_breathing_period = 3.5f;
+  if (!timer_cam.initialize_led(disconnected_led_breathing_period)) {
     logger.error("Could not initialize LED");
     return;
+  }
+  timer_cam.start_led_breathing();
+
+  // initialize camera
+  logger.info("Initializing camera");
+  err = initialize_camera();
+  if (err != ESP_OK) {
+    logger.error("Could not initialize camera: {} '{}'", err, esp_err_to_name(err));
   }
 
   // initialize WiFi
   logger.info("Initializing WiFi");
-  std::string server_address;
-  espp::WifiSta wifi_sta({.ssid = CONFIG_ESP_WIFI_SSID,
-                          .password = CONFIG_ESP_WIFI_PASSWORD,
-                          .num_connect_retries = CONFIG_ESP_MAXIMUM_RETRY,
-                          .on_connected = nullptr,
-                          .on_disconnected = nullptr,
-                          .on_got_ip = [&logger, &server_address](ip_event_got_ip_t *eventdata) {
-                            server_address =
-                                fmt::format("{}.{}.{}.{}", IP2STR(&eventdata->ip_info.ip));
-                            logger.info("got IP: {}", server_address);
-                          }});
-  // wait for network
-  float duty = 0.0f;
-  while (!wifi_sta.is_connected()) {
-    logger.info("waiting for wifi connection...");
-    logger.move_up();
-    logger.clear_line();
-    timer_cam.set_led_brightness(duty);
-    duty = duty == 0.0f ? 0.5f : 0.0f;
-    std::this_thread::sleep_for(1s);
-  }
+  espp::WifiSta wifi_sta(
+      {.ssid = CONFIG_ESP_WIFI_SSID,
+       .password = CONFIG_ESP_WIFI_PASSWORD,
+       .num_connect_retries = CONFIG_ESP_MAXIMUM_RETRY,
+       .on_connected =
+           []() {
+             static auto &timer_cam = espp::EspTimerCam::get();
+             timer_cam.set_led_breathing_period(connected_led_breathing_period);
+           },
+       .on_disconnected =
+           []() {
+             static auto &timer_cam = espp::EspTimerCam::get();
+             timer_cam.set_led_breathing_period(disconnected_led_breathing_period);
+             logger.info("Stopping camera task");
+             camera_task.reset();
+             logger.info("Stopping RTSP server");
+             rtsp_server.reset();
+           },
+       .on_got_ip =
+           [](ip_event_got_ip_t *eventdata) {
+             auto server_address = fmt::format("{}.{}.{}.{}", IP2STR(&eventdata->ip_info.ip));
+             logger.info("got IP: {}", server_address);
+             // create the camera and rtsp server, and the cv/m
+             // they'll use to communicate
+             start_rtsp_server(server_address, CONFIG_RTSP_SERVER_PORT);
+             // initialize the camera
+             logger.info("Creating camera task");
+             camera_task = espp::Task::make_unique(
+                 espp::Task::Config{.callback = camera_task_fn,
+                                    .task_config = {.name = "Camera Task", .priority = 10}});
+             camera_task->start();
+           }});
 
-  // initialize camera
+  espp::WifiStaMenu sta_menu(wifi_sta);
+  auto root_menu = sta_menu.get();
+  root_menu->Insert(
+      "memory",
+      [](std::ostream &out) {
+        out << "Minimum free memory: " << heap_caps_get_minimum_free_size(MALLOC_CAP_DEFAULT)
+            << std::endl;
+      },
+      "Display minimum free memory.");
+  root_menu->Insert(
+      "battery",
+      [](std::ostream &out) {
+        static auto &timer_cam = espp::EspTimerCam::get();
+        out << fmt::format("Battery voltage: {:.2f}\n", timer_cam.get_battery_voltage());
+      },
+      "Display the current battery voltage.");
+
+  cli::Cli cli(std::move(root_menu));
+  cli::SetColor();
+  cli.ExitAction([](auto &out) { out << "Goodbye and thanks for all the fish.\n"; });
+
+  espp::Cli input(cli);
+  input.SetInputHistorySize(10);
+  input.Start();
+}
+
+esp_err_t initialize_camera(void) {
   /**
    * @note display sizes supported:
    * *  QVGA:  320x240
@@ -85,7 +147,7 @@ extern "C" void app_main(void) {
    * *  UXGA:  1600x1200
    */
 
-  logger.info("Initializing camera");
+  auto &timer_cam = espp::EspTimerCam::get();
   static camera_config_t camera_config = {
       .pin_pwdn = -1,
       .pin_reset = timer_cam.get_camera_reset_pin(),
@@ -121,33 +183,22 @@ extern "C" void app_main(void) {
       .grab_mode =
           CAMERA_GRAB_LATEST // CAMERA_GRAB_WHEN_EMPTY // . Sets when buffers should be filled
   };
-  err = esp_camera_init(&camera_config);
-  if (err != ESP_OK) {
-    logger.error("Could not initialize camera: {} '{}'", err, esp_err_to_name(err));
-  }
+  return esp_camera_init(&camera_config);
+}
 
-  timer_cam.start_led_breathing();
-
-  // initialize RTC
-  if (!timer_cam.initialize_rtc()) {
-    logger.error("Could not initialize RTC");
-    return;
-  }
-
-  // create the camera and rtsp server, and the cv/m they'll use to
-  // communicate
-  int server_port = CONFIG_RTSP_SERVER_PORT;
+void start_rtsp_server(std::string_view server_address, int server_port) {
   logger.info("Creating RTSP server at {}:{}", server_address, server_port);
-  espp::RtspServer rtsp_server({.server_address = server_address,
-                                .port = server_port,
-                                .path = "mjpeg/1",
-                                .log_level = espp::Logger::Verbosity::WARN});
-  rtsp_server.set_session_log_level(espp::Logger::Verbosity::WARN);
-  rtsp_server.start();
+  rtsp_server = std::make_shared<espp::RtspServer>(
+      espp::RtspServer::Config{.server_address = std::string(server_address),
+                               .port = server_port,
+                               .path = "mjpeg/1",
+                               .log_level = espp::Logger::Verbosity::WARN});
+  rtsp_server->set_session_log_level(espp::Logger::Verbosity::WARN);
+  rtsp_server->start();
 
   // initialize mDNS
   logger.info("Initializing mDNS");
-  err = mdns_init();
+  esp_err_t err = mdns_init();
   if (err != ESP_OK) {
     logger.error("Could not initialize mDNS: {}", err);
     return;
@@ -173,47 +224,31 @@ extern "C" void app_main(void) {
     return;
   }
   logger.info("mDNS initialized");
+}
 
-  // initialize the camera
-  logger.info("Creating camera task");
-  auto camera_task_fn = [&rtsp_server, &logger](const auto &m, const auto &cv) -> bool {
-    // take image
-    static camera_fb_t *fb = NULL;
-    static size_t _jpg_buf_len;
-    static uint8_t *_jpg_buf;
+bool camera_task_fn(const std::mutex &m, const std::condition_variable &cv) {
+  // take image
+  static camera_fb_t *fb = NULL;
+  static size_t _jpg_buf_len;
+  static uint8_t *_jpg_buf;
 
-    fb = esp_camera_fb_get();
-    if (!fb) {
-      logger.error("Camera capture failed");
-      return false;
-    }
+  fb = esp_camera_fb_get();
+  if (!fb) {
+    logger.error("Camera capture failed");
+    return false;
+  }
 
-    _jpg_buf_len = fb->len;
-    _jpg_buf = fb->buf;
+  _jpg_buf_len = fb->len;
+  _jpg_buf = fb->buf;
 
-    if (!(_jpg_buf[_jpg_buf_len - 1] != 0xd9 || _jpg_buf[_jpg_buf_len - 2] != 0xd9)) {
-      esp_camera_fb_return(fb);
-      return false;
-    }
-
-    espp::JpegFrame image(reinterpret_cast<const char *>(_jpg_buf), _jpg_buf_len);
-    rtsp_server.send_frame(image);
-
+  if (!(_jpg_buf[_jpg_buf_len - 1] != 0xd9 || _jpg_buf[_jpg_buf_len - 2] != 0xd9)) {
     esp_camera_fb_return(fb);
     return false;
-  };
-
-  auto camera_task = espp::Task::make_unique(
-      {.callback = camera_task_fn, .task_config = {.name = "Camera Task", .priority = 10}});
-  camera_task->start();
-
-  while (true) {
-    std::this_thread::sleep_for(100ms);
-    // print out some stats (battery, framerate)
-    logger.info("Minimum free memory: {}, Battery voltage: {:.2f}",
-                heap_caps_get_minimum_free_size(MALLOC_CAP_DEFAULT),
-                timer_cam.get_battery_voltage());
-    logger.move_up();
-    logger.clear_line();
   }
-}
+
+  espp::JpegFrame image(reinterpret_cast<const char *>(_jpg_buf), _jpg_buf_len);
+  rtsp_server->send_frame(image);
+
+  esp_camera_fb_return(fb);
+  return false;
+};
