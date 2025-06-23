@@ -16,6 +16,9 @@ advertise the camera's IP address / port that the RTSP server is running on.
   - [Use](#use)
     - [Program](#program)
     - [Configure](#configure)
+  - [Development](#development)
+    - [Environment](#environment)
+    - [Build and Flash](#build-and-flash)
   - [Hardware](#hardware)
     - [Full pin-out:](#full-pin-out)
       - [Camera Interface (OV3660):](#camera-interface-ov3660)
@@ -95,6 +98,34 @@ Commands available:
  - battery
 	Display the current battery voltage.
 ```
+
+## Development
+
+If you wish to modify / recompile the code, you will need to set up your
+development environment to be able to build and flash your target hardware.
+
+### Environment
+
+This project is an ESP-IDF project, currently [ESP-IDF
+v.5.4](https://github.com/espressif/esp-idf).
+
+For information about setting up `ESP-IDF v5.4`, please see [the official
+ESP-IDF getting started
+documentation](https://docs.espressif.com/projects/esp-idf/en/v5.4/esp32s3/get-started/index.html).
+
+### Build and Flash
+
+Build the project and flash it to the board, then run monitor tool to view serial output:
+
+```
+idf.py -p PORT flash monitor
+```
+
+(Replace PORT with the name of the serial port to use.)
+
+(To exit the serial monitor, type ``Ctrl-]``.)
+
+See the Getting Started Guide for full steps to configure and use ESP-IDF to build projects.
 
 ## Hardware
 
