@@ -25,6 +25,7 @@ using namespace std::chrono_literals;
 
 static espp::Logger logger({.tag = "Camera Streamer", .level = espp::Logger::Verbosity::INFO});
 
+std::recursive_mutex server_mutex;
 std::unique_ptr<espp::Task> camera_task;
 std::shared_ptr<espp::RtspServer> rtsp_server;
 
@@ -82,6 +83,7 @@ extern "C" void app_main(void) {
            []() {
              static auto &timer_cam = espp::EspTimerCam::get();
              timer_cam.set_led_breathing_period(disconnected_led_breathing_period);
+             std::lock_guard<std::recursive_mutex> lock(server_mutex);
              logger.info("Stopping camera task");
              camera_task.reset();
              logger.info("Stopping RTSP server");
@@ -93,6 +95,7 @@ extern "C" void app_main(void) {
              logger.info("got IP: {}", server_address);
              // create the camera and rtsp server, and the cv/m
              // they'll use to communicate
+             std::lock_guard<std::recursive_mutex> lock(server_mutex);
              start_rtsp_server(server_address, CONFIG_RTSP_SERVER_PORT);
              // initialize the camera
              logger.info("Creating camera task");
@@ -188,6 +191,7 @@ esp_err_t initialize_camera(void) {
 
 void start_rtsp_server(std::string_view server_address, int server_port) {
   logger.info("Creating RTSP server at {}:{}", server_address, server_port);
+  std::lock_guard<std::recursive_mutex> lock(server_mutex);
   rtsp_server = std::make_shared<espp::RtspServer>(
       espp::RtspServer::Config{.server_address = std::string(server_address),
                                .port = server_port,
@@ -247,6 +251,7 @@ bool camera_task_fn(const std::mutex &m, const std::condition_variable &cv) {
   }
 
   espp::JpegFrame image(reinterpret_cast<const char *>(_jpg_buf), _jpg_buf_len);
+  std::lock_guard<std::recursive_mutex> lock(server_mutex);
   rtsp_server->send_frame(image);
 
   esp_camera_fb_return(fb);
