@@ -88,6 +88,8 @@ extern "C" void app_main(void) {
              camera_task.reset();
              logger.info("Stopping RTSP server");
              rtsp_server.reset();
+             logger.info("Deiniting MDNS");
+             mdns_free();
            },
        .on_got_ip =
            [](ip_event_got_ip_t *eventdata) {
@@ -186,7 +188,17 @@ esp_err_t initialize_camera(void) {
       .grab_mode =
           CAMERA_GRAB_LATEST // CAMERA_GRAB_WHEN_EMPTY // . Sets when buffers should be filled
   };
-  return esp_camera_init(&camera_config);
+  auto err = esp_camera_init(&camera_config);
+  if (err != ESP_OK) {
+    logger.error("Could not initialize camera: {} '{}'", err, esp_err_to_name(err));
+    return err;
+  }
+  // set the mirror and flip - specific to the ESP32-TimerCam!
+  logger.info("Enabling camera vflip");
+  sensor_t *s = esp_camera_sensor_get();
+  s->set_vflip(s, true);
+  s->set_hmirror(s, false);
+  return ESP_OK;
 }
 
 void start_rtsp_server(std::string_view server_address, int server_port) {
@@ -250,7 +262,8 @@ bool camera_task_fn(const std::mutex &m, const std::condition_variable &cv) {
     return false;
   }
 
-  espp::JpegFrame image(reinterpret_cast<const char *>(_jpg_buf), _jpg_buf_len);
+  std::span<const uint8_t> jpg_buf(_jpg_buf, _jpg_buf_len);
+  espp::JpegFrame image(jpg_buf);
   std::lock_guard<std::recursive_mutex> lock(server_mutex);
   rtsp_server->send_frame(image);
 
