@@ -7,6 +7,13 @@ on:
     types: [published]
   workflow_dispatch:
 
+env:
+  APP_NAME: 'Camera Streamer'
+  IDF_TARGET: 'esp32'
+  IDF_VERSION: 'v5.5.1'
+  IDF_COMPONENT_MANAGER: "1" # whether to enable the component manager or not
+  FLASH_TOTAL_OVERRIDE: '2097152' # 2MB flash app partition for main app
+
 jobs:
   build:
 
@@ -53,6 +60,19 @@ jobs:
           build/partition_table/partition-table.bin
           build/flasher_args.json
           build/flash_args
+
+    - name: Determine Size Delta
+      # only run this if the release is published
+      if: ${{ github.event.release && github.event.action == 'published' }}
+      uses: esp-cpp/esp-idf-size-delta@v1
+      with:
+        app_name: ${{ env.APP_NAME }}
+        app_path: "."
+        idf_target: ${{ env.IDF_TARGET }}
+        idf_version: ${{ env.IDF_VERSION }}
+        idf_component_manager: ${{ env.IDF_COMPONENT_MANAGER }}
+        flash_total_override: ${{ env.FLASH_TOTAL_OVERRIDE }}
+        post_comment: 'false'
 
   package:
     name: Package the binaries into an executables for Windows, MacOS, and Linux (Ubuntu)
