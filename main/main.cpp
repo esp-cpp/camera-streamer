@@ -41,6 +41,7 @@ std::unique_ptr<espp::Task> memory_monitor_task;
 std::unique_ptr<espp::TaskMonitor> task_monitor;
 std::shared_ptr<espp::RtspServer> rtsp_server;
 std::atomic<size_t> frames_streamed{0};
+std::atomic<bool> camera_initialized{false};
 
 esp_err_t initialize_camera(void);
 bool start_rtsp_server(std::string_view server_address, int server_port);
@@ -80,6 +81,8 @@ extern "C" void app_main(void) {
   err = initialize_camera();
   if (err != ESP_OK) {
     logger.error("Could not initialize camera: {} '{}'", err, esp_err_to_name(err));
+  } else {
+    camera_initialized = true;
   }
 
   logger.info("Starting memory monitors");
@@ -110,13 +113,24 @@ extern "C" void app_main(void) {
            []() {
              static auto &timer_cam = espp::EspTimerCam::get();
              timer_cam.set_led_breathing_period(disconnected_led_breathing_period);
-             std::lock_guard<std::recursive_mutex> lock(server_mutex);
-             logger.info("Stopping camera task");
-             camera_task.reset();
-             logger.info("Stopping RTSP server");
-             rtsp_server.reset();
-             logger.info("Deiniting MDNS");
-             mdns_free();
+             // Move ownership of the task / server out from under the lock so we
+             // can join the camera task without holding server_mutex. The camera
+             // task acquires server_mutex every iteration, so joining it while
+             // holding the lock would deadlock.
+             std::unique_ptr<espp::Task> dead_task;
+             std::shared_ptr<espp::RtspServer> dead_server;
+             {
+               std::lock_guard<std::recursive_mutex> lock(server_mutex);
+               logger.info("Stopping camera task");
+               dead_task = std::move(camera_task);
+               logger.info("Stopping RTSP server");
+               dead_server = std::move(rtsp_server);
+               logger.info("Deiniting MDNS");
+               mdns_free();
+             }
+             // Reset (joins the task / destroys the server) with no lock held.
+             dead_task.reset();
+             dead_server.reset();
            },
        .on_got_ip =
            [](ip_event_got_ip_t *eventdata) {
@@ -125,8 +139,20 @@ extern "C" void app_main(void) {
              // create the camera and rtsp server, and the cv/m
              // they'll use to communicate
              std::lock_guard<std::recursive_mutex> lock(server_mutex);
+             // Guard against a got-IP event arriving without an intervening
+             // disconnect (some reconnect paths): don't tear down a running
+             // server / task out from under active sessions.
+             if (rtsp_server) {
+               logger.info("RTSP server already running, ignoring duplicate got-IP event");
+               return;
+             }
              if (!start_rtsp_server(server_address, CONFIG_RTSP_SERVER_PORT)) {
                logger.error("RTSP server failed to start, not starting camera task");
+               return;
+             }
+             if (!camera_initialized) {
+               logger.error("Camera not initialized; RTSP server is up but no frames "
+                            "will be captured");
                return;
              }
              // initialize the camera
@@ -235,6 +261,10 @@ esp_err_t initialize_camera(void) {
   // set the mirror and flip - specific to the ESP32-TimerCam!
   logger.info("Enabling camera vflip");
   sensor_t *s = esp_camera_sensor_get();
+  if (!s) {
+    logger.error("Could not get camera sensor handle");
+    return ESP_FAIL;
+  }
   s->set_vflip(s, true);
   s->set_hmirror(s, false);
   return ESP_OK;
@@ -300,18 +330,25 @@ bool camera_task_fn(std::mutex &m, std::condition_variable &cv) {
     cv.wait_until(lk, deadline);
   };
 
+  // Grab a local reference to the server under the lock, then release it. The
+  // shared_ptr keeps the server alive for the rest of this iteration even if it
+  // is reset on another thread, so we never have to hold server_mutex across a
+  // wait or a send.
+  std::shared_ptr<espp::RtspServer> server;
   {
     std::lock_guard<std::recursive_mutex> lock(server_mutex);
-    if (!rtsp_server || !rtsp_server->has_active_sessions()) {
-      wait_until(start + idle_capture_poll_period);
-      return false;
-    }
-    auto recommended_capture_period = rtsp_server->get_recommended_capture_period();
-    auto capture_cooldown = rtsp_server->get_capture_cooldown();
-    if (capture_cooldown > 0ms) {
-      wait_until(start + std::max(recommended_capture_period, capture_cooldown));
-      return false;
-    }
+    server = rtsp_server;
+  }
+
+  if (!server || !server->has_active_sessions()) {
+    wait_until(start + idle_capture_poll_period);
+    return false;
+  }
+  auto recommended_capture_period = server->get_recommended_capture_period();
+  auto capture_cooldown = server->get_capture_cooldown();
+  if (capture_cooldown > 0ms) {
+    wait_until(start + std::max(recommended_capture_period, capture_cooldown));
+    return false;
   }
 
   auto dma_free = heap_caps_get_free_size(MALLOC_CAP_DMA);
@@ -330,42 +367,31 @@ bool camera_task_fn(std::mutex &m, std::condition_variable &cv) {
   }
 
   // take image
-  static camera_fb_t *fb = NULL;
-  static size_t _jpg_buf_len;
-  static uint8_t *_jpg_buf;
-
-  fb = esp_camera_fb_get();
+  camera_fb_t *fb = esp_camera_fb_get();
   if (!fb) {
     logger.error("Camera capture failed");
     return false;
   }
 
-  _jpg_buf_len = fb->len;
-  _jpg_buf = fb->buf;
+  size_t jpg_buf_len = fb->len;
+  const uint8_t *jpg_buf = fb->buf;
 
-  if (!(_jpg_buf[_jpg_buf_len - 1] != 0xd9 || _jpg_buf[_jpg_buf_len - 2] != 0xd9)) {
+  // Drop the frame unless it ends in a valid JPEG EOI marker (0xFF 0xD9);
+  // a truncated frame would otherwise be packetized and streamed.
+  if (jpg_buf_len < 2 || jpg_buf[jpg_buf_len - 2] != 0xff || jpg_buf[jpg_buf_len - 1] != 0xd9) {
     esp_camera_fb_return(fb);
     return false;
   }
 
-  std::span<const uint8_t> jpg_buf(_jpg_buf, _jpg_buf_len);
-  std::lock_guard<std::recursive_mutex> lock(server_mutex);
-  rtsp_server->send_frame(jpg_buf);
+  std::span<const uint8_t> jpg_span(jpg_buf, jpg_buf_len);
+  server->send_frame(jpg_span);
   frames_streamed++;
 
   esp_camera_fb_return(fb);
 
   // sleep for a short period to target ~10 FPS to yield to other tasks.
-  {
-    auto capture_period = target_stream_period;
-    {
-      std::lock_guard<std::recursive_mutex> lock(server_mutex);
-      if (rtsp_server) {
-        capture_period = std::max(capture_period, rtsp_server->get_recommended_capture_period());
-      }
-    }
-    wait_until(start + capture_period);
-  }
+  auto capture_period = std::max(target_stream_period, server->get_recommended_capture_period());
+  wait_until(start + capture_period);
 
   return false;
 };
