@@ -10,12 +10,10 @@ set(EXTRA_COMPONENT_DIRS
 
 add_compile_definitions(BOARD_HAS_PSRAM)
 
-set(
-  COMPONENTS
-  "main esptool_py esp_psram esp32-camera esp32-timer-cam mdns monitor nvs rtsp socket task wifi "
-  CACHE STRING
-  "List of components to include"
-  )
+# The set of board-specific components (esp32-timer-cam vs xiao-esp32s3-sense)
+# depends on the target chip, so component selection is handled by the
+# component manager (main/idf_component.yml) and main/CMakeLists.txt REQUIRES
+# rather than a hard-coded COMPONENTS list here.
 
 project(camera-streamer)
 

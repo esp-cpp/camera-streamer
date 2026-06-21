@@ -1,10 +1,58 @@
 menu "Camera Streamer Configuration"
 
+    choice CAMERA_STREAMER_BOARD
+        prompt "Target board"
+        default CAMERA_STREAMER_BOARD_XIAO_ESP32S3_SENSE if IDF_TARGET_ESP32S3
+        default CAMERA_STREAMER_BOARD_ESP32_TIMER_CAM
+        help
+            Select which camera board this firmware targets. Each board is tied
+            to a specific chip, so set the matching target first
+            (e.g. `idf.py set-target esp32` for the TimerCam or
+            `idf.py set-target esp32s3` for the XIAO ESP32S3 Sense). The
+            sdkconfig.defaults.<target> file selects the right board by default.
+
+        config CAMERA_STREAMER_BOARD_ESP32_TIMER_CAM
+            bool "M5Stack ESP32 TimerCam (OV3660)"
+            depends on IDF_TARGET_ESP32
+            help
+                M5Stack ESP32 TimerCam. Streams MJPEG video over RTSP.
+
+        config CAMERA_STREAMER_BOARD_XIAO_ESP32S3_SENSE
+            bool "Seeed Studio XIAO ESP32S3 Sense (OV2640 + PDM mic)"
+            depends on IDF_TARGET_ESP32S3
+            help
+                Seeed Studio XIAO ESP32S3 Sense. Streams MJPEG video plus L16
+                PCM audio (from the onboard PDM microphone) over RTSP.
+    endchoice
+
     config RTSP_SERVER_PORT
         int "RTSP Server Port"
         default 8554
         help
             The port number of the RTSP server.
+
+    config RTSP_ACCEPT_TASK_STACK_SIZE
+        int "RTSP accept task stack size (bytes)"
+        range 2048 32768
+        default 4096
+        help
+            Stack size for the RTSP server accept task.
+
+    config RTSP_SESSION_TASK_STACK_SIZE
+        int "RTSP session task stack size (bytes)"
+        range 2048 32768
+        default 4096
+        help
+            Stack size for the RTSP server session-dispatch task.
+
+    config RTSP_CONTROL_TASK_STACK_SIZE
+        int "RTSP control task stack size (bytes)"
+        range 2048 32768
+        default 8192
+        help
+            Stack size for each per-client RTSP control task. Increase this if
+            the board reports a stack overflow in a task named like
+            "RtspSession <id>".
 
     config ESP_WIFI_SSID
         string "WiFi SSID"

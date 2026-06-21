@@ -4,7 +4,6 @@ on: [pull_request]
 
 env:
   APP_NAME: 'Camera Streamer'
-  IDF_TARGET: 'esp32'
   IDF_VERSION: 'v5.5.1'
   IDF_COMPONENT_MANAGER: "1" # whether to enable the component manager or not
   FLASH_TOTAL_OVERRIDE: '2097152' # 2MB flash app partition for main app
@@ -14,25 +13,34 @@ jobs:
 
     runs-on: ubuntu-latest
 
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - board: 'timer-cam'
+            target: 'esp32'
+          - board: 'xiao-esp32s3-sense'
+            target: 'esp32s3'
+
     steps:
     - name: Checkout repo
       uses: actions/checkout@v4
       with:
         submodules: true
 
-    - name: Build Main
+    - name: Build Main (${{ matrix.board }})
       uses: espressif/esp-idf-ci-action@v1
       with:
         esp_idf_version: ${{ env.IDF_VERSION }}
-        target: ${{ env.IDF_TARGET }}
+        target: ${{ matrix.target }}
         path: '.'
 
-    - name: Determine Size Delta
+    - name: Determine Size Delta (${{ matrix.board }})
       uses: esp-cpp/esp-idf-size-delta@v1
       with:
-        app_name: ${{ env.APP_NAME }}
+        app_name: '${{ env.APP_NAME }} (${{ matrix.board }})'
         app_path: '.'
-        idf_target: ${{ env.IDF_TARGET }}
+        idf_target: ${{ matrix.target }}
         idf_version: ${{ env.IDF_VERSION }}
         idf_component_manager: ${{ env.IDF_COMPONENT_MANAGER }}
         flash_total_override: ${{ env.FLASH_TOTAL_OVERRIDE }}

@@ -11,4 +11,13 @@ dependencies:
   espp/socket: '>=1.0'
   espp/nvs: '>=1.0'
   espp/task: '>=1.0'
-  espp/esp32-timer-cam: '>=1.0'
+  espp/cli: '>=1.0'
+  ## Board support packages - only one is pulled in, based on the target chip
+  espp/esp32-timer-cam:
+    version: '>=1.0'
+    rules:
+      - if: 'target in [esp32]'
+  espp/xiao-esp32s3-sense:
+    version: '>=1.0'
+    rules:
+      - if: 'target in [esp32s3]'
