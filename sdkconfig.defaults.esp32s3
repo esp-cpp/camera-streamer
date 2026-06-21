@@ -1,0 +1,26 @@
+# Seeed Studio XIAO ESP32S3 Sense (OV2640 camera + PDM microphone). Loaded
+# automatically by ESP-IDF in addition to sdkconfig.defaults when the target is
+# esp32s3.
+CONFIG_IDF_TARGET="esp32s3"
+
+CONFIG_CAMERA_STREAMER_BOARD_XIAO_ESP32S3_SENSE=y
+
+# 8MB flash
+CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="8MB"
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+
+# The ESP32-S3 has native USB; route the console to USB Serial/JTAG so the CLI
+# works over the single USB-C connector.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+
+# Octal PSRAM on the ESP32-S3R8 module
+CONFIG_SPIRAM_MODE_OCT=y
+
+# Give esp-timer headroom for the camera + RTSP workload
+CONFIG_ESP_TIMER_TASK_STACK_SIZE=6144
+
+# RTSP task stack sizing (video + audio multitrack)
+CONFIG_RTSP_ACCEPT_TASK_STACK_SIZE=4096
+CONFIG_RTSP_SESSION_TASK_STACK_SIZE=4096
+CONFIG_RTSP_CONTROL_TASK_STACK_SIZE=8192

@@ -1,8 +1,18 @@
 # camera-streamer
 
-Example for [ESP32 TimerCam](https://github.com/m5stack/TimerCam-idf) rebuilt using [ESPP](http://github.com/esp-cpp/espp) to stream video over the network
+Camera streamer built using [ESPP](http://github.com/esp-cpp/espp) to stream
+video (and, where available, audio) over the network. It supports two boards,
+selected at build time by the target chip:
 
-It uses RTSP + RTP (over UDP) to perform real-time streaming of the camera data over the network to multiple clients.
+| Board | Target | Sensor | Streams |
+|-------|--------|--------|---------|
+| [M5Stack ESP32 TimerCam](https://github.com/m5stack/TimerCam-idf) | `esp32` | OV3660 | MJPEG video |
+| [Seeed Studio XIAO ESP32S3 Sense](https://wiki.seeedstudio.com/xiao_esp32s3_getting_started/) | `esp32s3` | OV2640 + PDM mic | MJPEG video + L16 PCM audio |
+
+It uses RTSP + RTP (over UDP) to perform real-time streaming of the camera data
+over the network to multiple clients. On the XIAO ESP32S3 Sense, the onboard PDM
+microphone is streamed as a second RTP track (L16 / 16 kHz mono) alongside the
+video.
 
 https://user-images.githubusercontent.com/213467/236601550-ba1a5ba1-4f1c-4dfa-9b64-94afbd46ef3f.mp4
 
@@ -115,7 +125,25 @@ documentation](https://docs.espressif.com/projects/esp-idf/en/v5.5.1/esp32s3/get
 
 ### Build and Flash
 
-Build the project and flash it to the board, then run monitor tool to view serial output:
+This project supports two boards, each tied to a specific chip. Select the board
+by setting the matching target before building — ESP-IDF automatically applies
+the corresponding `sdkconfig.defaults.<target>` (which selects the board in
+Kconfig):
+
+```
+# M5Stack ESP32 TimerCam (the default target)
+idf.py set-target esp32
+
+# Seeed Studio XIAO ESP32S3 Sense (camera + microphone)
+idf.py set-target esp32s3
+```
+
+You can also flip the board explicitly under `Camera Streamer Configuration ->
+Target board` in `idf.py menuconfig` (only the board matching the current chip is
+selectable).
+
+Then build the project and flash it to the board, and run the monitor tool to
+view serial output:
 
 ```
 idf.py -p PORT flash monitor
@@ -125,13 +153,24 @@ idf.py -p PORT flash monitor
 
 (To exit the serial monitor, type ``Ctrl-]``.)
 
+> [!NOTE]
+> When you switch targets, run `idf.py fullclean` first (or delete the `build/`
+> and `sdkconfig` files) so the new target's defaults are applied cleanly.
+
 See the Getting Started Guide for full steps to configure and use ESP-IDF to build projects.
 
 ## Hardware
 
-This sample is designed to run on the ESP32 TimerCam ([Amazon Link](https://www.amazon.com/dp/B09W2RSPGL?psc=1&ref=ppx_yo2ov_dt_b_product_details)).
+This sample runs on either the M5Stack ESP32 TimerCam or the Seeed Studio XIAO
+ESP32S3 Sense. The board pin mappings come from the corresponding ESPP board
+support package ([`esp32-timer-cam`](https://github.com/esp-cpp/espp/tree/main/components/esp32-timer-cam)
+or [`xiao-esp32s3-sense`](https://github.com/esp-cpp/espp/tree/main/components/xiao-esp32s3-sense)),
+so the pin tables below are informational.
 
-The ESP32 TimerCam has the following specs:
+### M5Stack ESP32 TimerCam
+
+The ESP32 TimerCam ([Amazon Link](https://www.amazon.com/dp/B09W2RSPGL?psc=1&ref=ppx_yo2ov_dt_b_product_details))
+has the following specs:
 
 * 8MB PSRAM
 * 4MB flash
@@ -193,6 +232,31 @@ From their actual code...
 | LED          | IO2               |
 | Button       | IO37              |
 
+### Seeed Studio XIAO ESP32S3 Sense
+
+The XIAO ESP32S3 Sense ([Seeed Studio Wiki](https://wiki.seeedstudio.com/xiao_esp32s3_getting_started/))
+pairs the XIAO ESP32S3 module with the "Sense" expansion board, which adds an
+OV2640 camera and a PDM microphone.
+
+The XIAO ESP32S3 Sense has the following specs:
+
+* 8MB PSRAM, 8MB flash
+* OV2640 image sensor (2MP), via the Sense expansion board (XCLK 20 MHz)
+* PDM microphone, via the Sense expansion board
+* microSD slot (SPI), via the Sense expansion board
+* User LED + native USB-C (console runs over USB Serial/JTAG)
+
+The camera, microphone, microSD, and LED pin mappings are provided by the ESPP
+[`xiao-esp32s3-sense`](https://github.com/esp-cpp/espp/tree/main/components/xiao-esp32s3-sense)
+board support package.
+
+#### Microphone (PDM):
+
+| Mic Pin | ESP32-S3 GPIO Number |
+|---------|----------------------|
+| CLK     | IO42                 |
+| DATA    | IO41                 |
+
 
 ## Additional References
 
@@ -201,3 +265,5 @@ From their actual code...
 * https://github.com/esp-cpp/espp
 * https://github.com/m5stack/TimerCam-idf
 * https://docs.m5stack.com/#/en/unit/timercam
+* https://wiki.seeedstudio.com/xiao_esp32s3_getting_started/
+* https://esp-cpp.github.io/espp/xiao_esp32s3_sense.html

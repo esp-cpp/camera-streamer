@@ -9,7 +9,6 @@ on:
 
 env:
   APP_NAME: 'Camera Streamer'
-  IDF_TARGET: 'esp32'
   IDF_VERSION: 'v5.5.1'
   IDF_COMPONENT_MANAGER: "1" # whether to enable the component manager or not
   FLASH_TOTAL_OVERRIDE: '2097152' # 2MB flash app partition for main app
@@ -20,8 +19,14 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: false
 
-    outputs:
-      zipfile-id: ${{ steps.zip_step.outputs.artifact-id }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - board: 'timer-cam'
+            target: 'esp32'
+          - board: 'xiao-esp32s3-sense'
+            target: 'esp32s3'
 
     steps:
     - name: Checkout repo
@@ -29,18 +34,17 @@ jobs:
       with:
         submodules: true
 
-    - name: Build Main Code
+    - name: Build Main Code (${{ matrix.board }})
       uses: espressif/esp-idf-ci-action@v1
       with:
-        esp_idf_version: release-v5.4
-        target: esp32
+        esp_idf_version: ${{ env.IDF_VERSION }}
+        target: ${{ matrix.target }}
         path: '.'
 
-    - name: Upload Build Outputs
+    - name: Upload Build Outputs (${{ matrix.board }})
       uses: actions/upload-artifact@v4
-      id: zip_step
       with:
-        name: build-artifacts
+        name: build-artifacts-${{ matrix.board }}
         path: |
           build/*.bin
           build/*.elf
@@ -49,40 +53,47 @@ jobs:
           build/flasher_args.json
           build/flash_args
 
-    - name: Attach files to release
+    - name: Stage release files (${{ matrix.board }})
+      if: ${{ github.event.release && github.event.action == 'published' }}
+      run: |
+        mkdir -p release
+        cp build/camera-streamer.bin release/camera-streamer_${{ matrix.board }}.bin
+        cp build/camera-streamer.elf release/camera-streamer_${{ matrix.board }}.elf
+        cp build/bootloader/bootloader.bin release/bootloader_${{ matrix.board }}.bin
+        cp build/partition_table/partition-table.bin release/partition-table_${{ matrix.board }}.bin
+        cp build/flasher_args.json release/flasher_args_${{ matrix.board }}.json
+
+    - name: Attach files to release (${{ matrix.board }})
       uses: softprops/action-gh-release@v2
       if: ${{ github.event.release && github.event.action == 'published' }}
       with:
         files: |
-          build/*.bin
-          build/*.elf
-          build/bootloader/bootloader.bin
-          build/partition_table/partition-table.bin
-          build/flasher_args.json
-          build/flash_args
+          release/*
 
-    - name: Determine Size Delta
+    - name: Determine Size Delta (${{ matrix.board }})
       # only run this if the release is published
       if: ${{ github.event.release && github.event.action == 'published' }}
       uses: esp-cpp/esp-idf-size-delta@v1
       with:
-        app_name: ${{ env.APP_NAME }}
+        app_name: '${{ env.APP_NAME }} (${{ matrix.board }})'
         app_path: "."
-        idf_target: ${{ env.IDF_TARGET }}
+        idf_target: ${{ matrix.target }}
         idf_version: ${{ env.IDF_VERSION }}
         idf_component_manager: ${{ env.IDF_COMPONENT_MANAGER }}
         flash_total_override: ${{ env.FLASH_TOTAL_OVERRIDE }}
         post_comment: 'false'
 
   package:
-    name: Package the binaries into an executables for Windows, MacOS, and Linux (Ubuntu)
+    name: Package the binaries into executables for Windows, MacOS, and Linux (Ubuntu)
     needs: build
     strategy:
+      fail-fast: false
       matrix:
         os: [windows-latest, macos-latest, ubuntu-latest]
+        board: ['timer-cam', 'xiao-esp32s3-sense']
     runs-on: ${{ matrix.os }}
     steps:
       - uses: esp-cpp/esp-packaged-programmer-action@v1.0.5
         with:
-          zipfile-id: ${{ needs.build.outputs.zipfile-id }}
-          programmer-name: 'camera-streamer_programmer'
+          zipfile-name: build-artifacts-${{ matrix.board }}
+          programmer-name: 'camera-streamer_${{ matrix.board }}_programmer'

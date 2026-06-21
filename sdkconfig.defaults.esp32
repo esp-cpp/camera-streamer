@@ -1,0 +1,9 @@
+# M5Stack ESP32 TimerCam (OV3660). Loaded automatically by ESP-IDF in addition
+# to sdkconfig.defaults when the target is esp32.
+CONFIG_IDF_TARGET="esp32"
+
+CONFIG_CAMERA_STREAMER_BOARD_ESP32_TIMER_CAM=y
+
+# 4MB flash
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="4MB"
