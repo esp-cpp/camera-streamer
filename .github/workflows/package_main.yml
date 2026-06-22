@@ -30,7 +30,7 @@ jobs:
 
     steps:
     - name: Checkout repo
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
       with:
         submodules: true
         fetch-tags: true
@@ -44,7 +44,7 @@ jobs:
         path: '.'
 
     - name: Upload Build Outputs (${{ matrix.board }})
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: build-artifacts-${{ matrix.board }}
         path: |
@@ -65,7 +65,7 @@ jobs:
         echo "artifact_path=$zip_name" >> "$GITHUB_ENV"
 
     - name: Attach files to release (${{ matrix.board }})
-      uses: softprops/action-gh-release@v2
+      uses: softprops/action-gh-release@v3
       if: ${{ github.event.release && github.event.action == 'published' }}
       with:
         files: ${{ env.artifact_path }}
